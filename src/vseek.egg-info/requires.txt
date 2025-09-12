@@ -1,2 +1,0 @@
-accelerate>=1.10.1
-tqdm>=4.67.1
