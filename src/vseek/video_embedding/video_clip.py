@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from nsv_pkg.utils.torch import get_device
-from nsv_pkg.video_embedding._base import (
+from vseek.utils.torch import get_device
+from vseek.video_embedding._base import (
     ComputerVisionModelVideoEmbeddingBase,
 )
-from nsv_pkg.video_embedding.lib_viclip import frames2tensor, get_viclip, get_vid_feat
+from vseek.video_embedding.lib_viclip import frames2tensor, get_viclip, get_vid_feat
 
 if TYPE_CHECKING:
     from torch import Tensor
