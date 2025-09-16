@@ -13,6 +13,11 @@ dependencies = [
     "timm",
     "opencv-python",
     "fvcore",
+    "transformers>=4.45.0",
+    "torch",
+    "torchvision",
+    "vllm>=0.10.2",
+    "langchain>=0.3.27",
 ]
 
 [build-system]

@@ -1,12 +1,11 @@
 import base64
 
-from openai import OpenAI
-import numpy as np
-import math
 import cv2
+import numpy as np
+from openai import OpenAI
 
+from vseek.vlm.obj import DetectedObject
 
-from ns_vfs.vlm.obj import DetectedObject
 
 class VLLMClient:
     def __init__(
@@ -29,14 +28,13 @@ class VLLMClient:
         return base64.b64encode(buffer).decode("utf-8")
 
     def detect(
-        self,
-        seq_of_frames: list[np.ndarray],
-        scene_description: str,
-        threshold: float
+        self, seq_of_frames: list[np.ndarray], scene_description: str, threshold: float
     ) -> DetectedObject:
-
         parsing_rule = "You must only return a Yes or No, and not both, to any question asked. You must not include any other symbols, information, text, justification in your answer or repeat Yes or No multiple times. For example, if the question is \"Is there a cat present in the sequence of images?\", the answer must only be 'Yes' or 'No'."
-        prompt = rf"Is there a {scene_description} present in the sequence of images? " f"\n[PARSING RULE]: {parsing_rule}"
+        prompt = (
+            rf"Is there a {scene_description} present in the sequence of images? "
+            f"\n[PARSING RULE]: {parsing_rule}"
+        )
 
         # Encode each frame.
         encoded_images = [self._encode_frame(frame) for frame in seq_of_frames]
@@ -45,7 +43,7 @@ class VLLMClient:
         user_content = [
             {
                 "type": "text",
-                "text": f"The following is the sequence of images",
+                "text": "The following is the sequence of images",
             }
         ]
         for encoded in encoded_images:
@@ -88,11 +86,12 @@ class VLLMClient:
         if yes_prob + no_prob > 0:
             confidence = yes_prob / (yes_prob + no_prob)
         else:
-            raise ValueError("No probabilities for 'Yes' or 'No' found in the response.")
+            raise ValueError(
+                "No probabilities for 'Yes' or 'No' found in the response."
+            )
 
         # print(f"Is detected: {is_detected}")
         # print(f"Confidence: {confidence:.3f}")
-
 
         probability = self.calibrate(confidence=confidence, false_threshold=threshold)
 
@@ -100,7 +99,7 @@ class VLLMClient:
             name=scene_description,
             is_detected=is_detected,
             confidence=round(confidence, 3),
-            probability=round(probability, 3)
+            probability=round(probability, 3),
         )
 
     def calibrate(
@@ -165,4 +164,3 @@ class VLLMClient:
         normalized = (sigmoid_value - min_val) / (max_val - min_val)
 
         return p_min + normalized * (p_max - p_min)
-

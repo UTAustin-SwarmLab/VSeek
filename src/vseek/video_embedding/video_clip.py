@@ -40,6 +40,17 @@ class ViClip(ComputerVisionModelVideoEmbeddingBase):
 
         self.clip = self.clip.to(self.device)
 
+    def get_text_embedding(self, text: str) -> Tensor:
+        """Get text embedding of a text.
+
+        Args:
+            text: The text to get the embedding of
+
+        Returns:
+            The embedding of the text as a PyTorch tensor
+        """
+        return self.clip.get_text_features(text, self.tokenizer)
+
     def get_feature(self, frames: np.ndarray | list[np.ndarray]) -> Tensor:
         """Get feature vectors of a video clip.
 

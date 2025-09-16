@@ -11,9 +11,12 @@ def video_indexing_pipeline(
     desired_interval_in_sec: int = 1,
     callback: callable = None,
     window_size: int = 10,
+    gpu_number: int = 0,
 ):
     video = read_video(video_path=video_path)
-    vclip = ViClip(pretrained_model_path=VICLIP_SETTING.vclip_model_path)
+    vclip = ViClip(
+        pretrained_model_path=VICLIP_SETTING.vclip_model_path, gpu_number=gpu_number
+    )
     frame_index = 0
     window_index = 0
     video_frames = VideoFrames(window_size=window_size)
