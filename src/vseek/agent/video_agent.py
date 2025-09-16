@@ -50,6 +50,10 @@ class VSeekAgent(VLLMClient):
             search_pattern = r"<search>(.*?)</search>"
             search_match = re.search(search_pattern, content, re.DOTALL)
             search = search_match.group(1).strip() if search_match else None
+            
+            search_pattern = r"<search_subtitle>(.*?)</search_subtitle>"
+            search_match = re.search(search_pattern, content, re.DOTALL)
+            search_subtitle = search_match.group(1).strip() if search_match else None
 
             # Validate that we have the required fields
             if not thought or len(thought.strip()) < 5:
@@ -85,6 +89,7 @@ class VSeekAgent(VLLMClient):
                         thought=thought.strip(),
                         answer="",
                         search="",
+                        search_subtitle="",
                     )
 
             # Create AgentOutput object
@@ -92,6 +97,7 @@ class VSeekAgent(VLLMClient):
                 thought=thought.strip(),
                 answer=answer.strip() if answer else None,
                 search=search.strip() if search else None,
+                search_subtitle=search_subtitle.strip() if search_subtitle else None,
             )
 
         except Exception as e:
@@ -244,7 +250,8 @@ class VSeekAgent(VLLMClient):
                     )
                 parse_attempts += 1  # engineering iteration
                 continue  # Try again with next iteration
-
+            
+            # TODO: agent needs to handle the search_subtitle case
             if agent_output:
                 reasoning_trajectory.append(agent_output)
 
@@ -313,3 +320,15 @@ class VSeekAgent(VLLMClient):
         sorted_indices = torch.argsort(similarities, descending=True)
 
         return sorted_indices.cpu().tolist()
+
+    def search_subtitle(self, subtitles: str, search_query: str) -> list[int]:
+        """Search for the most similar subtitle to the text query.
+
+        Args:
+            subtitles: List of subtitles (strings)
+            search_query: Text query to search for
+
+        Returns:
+            List of indices sorted by similarity (highest first)
+        """
+        raise NotImplementedError("Search subtitle is not implemented yet.")
