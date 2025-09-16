@@ -7,3 +7,4 @@ class DataInput(BaseModel):
     video: VideoFrames
     question: str
     answer: str
+    subtitles: str
