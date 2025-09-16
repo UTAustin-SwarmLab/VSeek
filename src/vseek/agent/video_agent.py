@@ -1,9 +1,8 @@
-import re
-
 import torch
 
+from vseek.agent.utils.parse_response import parse_response_with_regex
 from vseek.data.exp_io import DataInput
-from vseek.data.vseek_dm import AgentOutput, ReasoningTrajectory
+from vseek.data.vseek_dm import ReasoningTrajectory
 from vseek.setting import ViClipSetting, VLLMSetting
 from vseek.video_embedding.video_clip import ViClip
 from vseek.vlm.vllm_client import VLLMClient
@@ -25,85 +24,6 @@ class VSeekAgent(VLLMClient):
             gpu_number=VICLIP_SETTING.gpu_number,
         )
 
-    def _parse_response_with_regex(
-        self, content: str, just_thought: bool = False
-    ) -> AgentOutput | None:
-        """
-        Parse response using tag-based format from system prompt.
-        Extracts thought, answer, and search fields from <think>, <answer>, and <search> tags.
-        """
-        try:
-            # Clean the content - remove extra whitespace and newlines
-            content = content.strip()
-
-            # Extract thought field from <think> tags
-            thought_pattern = r"<think>(.*?)</think>"
-            thought_match = re.search(thought_pattern, content, re.DOTALL)
-            thought = thought_match.group(1).strip() if thought_match else None
-
-            # Extract answer field from <answer> tags
-            answer_pattern = r"<answer>(.*?)</answer>"
-            answer_match = re.search(answer_pattern, content, re.DOTALL)
-            answer = answer_match.group(1).strip() if answer_match else None
-
-            # Extract search field from <search> tags
-            search_pattern = r"<search>(.*?)</search>"
-            search_match = re.search(search_pattern, content, re.DOTALL)
-            search = search_match.group(1).strip() if search_match else None
-            
-            search_pattern = r"<search_subtitle>(.*?)</search_subtitle>"
-            search_match = re.search(search_pattern, content, re.DOTALL)
-            search_subtitle = search_match.group(1).strip() if search_match else None
-
-            # Validate that we have the required fields
-            if not thought or len(thought.strip()) < 5:
-                print("Regex parser: Invalid or missing thought field")
-                return None
-
-            # Check answer length constraint (AgentOutput has max_length=200)
-            if answer and len(answer.strip()) > 200:
-                print(
-                    f"Regex parser: Answer field too long ({len(answer.strip())} chars), truncating to 200 chars"
-                )
-                answer = answer.strip()[:197] + "..."  # Truncate and add ellipsis
-
-            # Check search length constraint (AgentOutput has max_length=200)
-            if search and len(search.strip()) > 200:
-                print(
-                    f"Regex parser: Search field too long ({len(search.strip())} chars), truncating to 200 chars"
-                )
-                search = search.strip()[:197] + "..."  # Truncate and add ellipsis
-
-            # Ensure exactly one of answer or search is provided (XOR validation)
-            has_answer = answer is not None and len(answer.strip()) > 0
-            has_search = search is not None and len(search.strip()) > 0
-
-            if has_answer == has_search:  # Both true or both false
-                print(
-                    f"Regex parser: XOR validation failed - has_answer: {has_answer}, has_search: {has_search}"
-                )
-                if not just_thought:
-                    return None
-                else:
-                    return AgentOutput(
-                        thought=thought.strip(),
-                        answer="",
-                        search="",
-                        search_subtitle="",
-                    )
-
-            # Create AgentOutput object
-            return AgentOutput(
-                thought=thought.strip(),
-                answer=answer.strip() if answer else None,
-                search=search.strip() if search else None,
-                search_subtitle=search_subtitle.strip() if search_subtitle else None,
-            )
-
-        except Exception as e:
-            print(f"Regex parsing failed: {e}")
-            return None
-
     def run(
         self,
         data_input: DataInput,
@@ -120,19 +40,18 @@ class VSeekAgent(VLLMClient):
         # 2. For questions you can answer directly from the video, you must provide an answer within the <answer> and </answer> tags.
         # 3. If you think you need more information, you must provide a search query within the <search> and </search> tags. Each search query should be a concise (1–3 sentences), optimized video search query ONLY if you cannot answer. Include specific entities/objects/ and actions when available.
 
-
         # **EXAMPLES**:
-        
+
         # Question: Is there a unicorn prancing until a pizza eats a strawberry? Please answer in yes or no.
         # <think>I first need to search for relevent video frames that has a unicorn prancing and a pizza eating a strawberry</think>
         # <search>a unicorn is prancing</search>
         # <think>These frames don't show a unicorn prancing and pizza eating a strawberry. I now need to search for frames that show a pizza eating a strawberry</think>
-        
+
         # Question: What is the color of the unicorn?
         # <answer>The color of the unicorn is white.</answer>
         # <search>a unicorn is prancing until a pizza eats a strawberry</search>
         # - Always fill exactly ONE field (answer OR search), never both"""
-        system_prompt = f"""
+        system_prompt = """
 
         You are a video analysis assistant. You will be given a question and access to a video. Your task is to answer the question in a step-by-step manner by analyzing the video.
         **INSTRUCTIONS**:
@@ -195,7 +114,7 @@ class VSeekAgent(VLLMClient):
         <answer>A.</answer>
 
         """
-        
+
         iteration = 0
         parse_attempts = 0
         reasoning_trajectory = []
@@ -212,11 +131,10 @@ class VSeekAgent(VLLMClient):
                     }
                 ]
             else:
-                
                 encoded_images = [
-                        self._encode_frame(frame)
-                        for frame in data_input.video.get_frame_chunk(video_window_idx)
-                    ]
+                    self._encode_frame(frame)
+                    for frame in data_input.video.get_frame_chunk(video_window_idx)
+                ]
             # # Build the user message: a text prompt plus one image for each frame.
 
             for encoded in encoded_images:
@@ -239,7 +157,7 @@ class VSeekAgent(VLLMClient):
             content = chat_response.choices[0].message.content
 
             # Parse the response using tag-based format
-            agent_output = self._parse_response_with_regex(content)
+            agent_output = parse_response_with_regex(content)
             message_content.append({"role": "assistant", "content": content})
             if agent_output is None:
                 if parse_attempts >= max_parse_attempts:
@@ -250,7 +168,7 @@ class VSeekAgent(VLLMClient):
                     )
                 parse_attempts += 1  # engineering iteration
                 continue  # Try again with next iteration
-            
+
             # TODO: agent needs to handle the search_subtitle case
             if agent_output:
                 reasoning_trajectory.append(agent_output)
