@@ -4,7 +4,7 @@ from vseek.data.vseek_dm import AgentOutput
 
 
 def parse_response_with_regex(
-    self, content: str, just_thought: bool = False
+    content: str, just_thought: bool = False
 ) -> AgentOutput | None:
     """
     Parse response using tag-based format from system prompt.
@@ -14,6 +14,7 @@ def parse_response_with_regex(
         # Clean the content - remove extra whitespace and newlines
         content = content.strip()
 
+        print(content)
         # Extract thought field from <think> tags
         thought_pattern = r"<think>(.*?)</think>"
         thought_match = re.search(thought_pattern, content, re.DOTALL)
@@ -31,12 +32,18 @@ def parse_response_with_regex(
 
         search_pattern = r"<search_subtitle>(.*?)</search_subtitle>"
         search_match = re.search(search_pattern, content, re.DOTALL)
-        search_subtitle = search_match.group(1).strip() if search_match else None
+        search_subtitle = search_match.group(1  ).strip() if search_match else None
 
         # Validate that we have the required fields
         if not thought or len(thought.strip()) < 5:
             print("Regex parser: Invalid or missing thought field")
             return None
+
+        if thought and len(thought.strip()) > 1000:
+            print(
+                f"Regex parser: Thought field too long ({len(thought.strip())} chars), truncating to 200 chars"
+            )
+            thought = thought.strip()[:997] + "..."  # Truncate and add ellipsis
 
         # Check answer length constraint (AgentOutput has max_length=200)
         if answer and len(answer.strip()) > 200:

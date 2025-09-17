@@ -32,8 +32,8 @@ class ViClipSetting(BaseSettings):
 
 
 class VLLMSetting(BaseSettings):
-    openai_api_key: Optional[str] = None
-    api_base: str = "http://localhost:8001/v1"
+    openai_api_key: Optional[str] = "EMPTY"
+    api_base: str = "http://localhost:8002/v1"
     model: str = "Qwen/Qwen2.5-VL-7B-Instruct"
 
     class Config:
