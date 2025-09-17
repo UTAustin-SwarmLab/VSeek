@@ -24,8 +24,6 @@ class LongVideoBench(Manager):
         self._nsvs_path = (
             "/nas/mars/experiment_result/nsvqa/5_full_output/longvideobench_output.json"
         )
-        self._output_path_nsvqa = "/nas/mars/experiment_result/nsvqa/6_formatted_output/longvideobench_nsvqa_all_categories"
-        self._output_path_full = "/nas/mars/experiment_result/nsvqa/6_formatted_output/longvideobench_full_all_categories"
         # self._output_path_position = "/nas/mars/experiment_result/nsvqa/6_formatted_output/longvideobench_position"
         self._categories = [
             "S2E",
