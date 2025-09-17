@@ -5,11 +5,11 @@
 MODEL="Qwen/Qwen2.5-VL-7B-Instruct"
 export CUDA_DEVICE_ORDER="PCI_BUS_ID"
 export NCCL_P2P_DISABLE=1
-export CUDA_VISIBLE_DEVICES="6"
+export CUDA_VISIBLE_DEVICES="5"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-PORT=8001
-uv run vllm serve $MODEL \
+PORT=8002
+vllm serve $MODEL \
     --tensor-parallel-size 1 \
     --port $PORT \
     --trust-remote-code
