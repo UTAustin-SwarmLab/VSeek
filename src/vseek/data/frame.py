@@ -128,6 +128,13 @@ class VideoFrames(BaseModel):
             },
             "frames_count": len(self.frames),
             "embeddings_count": len(self.embeddings),
+            "subtitles": self.subtitles,
+            "subtitles_by_window": {
+                str(k): v for k, v in self.subtitles_by_window.items()
+            },
+            "unique_subtitles_by_window": {
+                str(k): v for k, v in self.unique_subtitles_by_window.items()
+            },
         }
 
         # Save frame metadata and images separately
@@ -222,6 +229,15 @@ class VideoFrames(BaseModel):
                 int(k): tuple(v) for k, v in metadata["window_index_map"].items()
             },
         )
+
+        # Restore subtitle fields
+        video_frames.subtitles = metadata.get("subtitles", [])
+        video_frames.subtitles_by_window = {
+            int(k): v for k, v in metadata.get("subtitles_by_window", {}).items()
+        }
+        video_frames.unique_subtitles_by_window = {
+            int(k): v for k, v in metadata.get("unique_subtitles_by_window", {}).items()
+        }
 
         # Load frames
         frames_dir = base_dir / "frames"

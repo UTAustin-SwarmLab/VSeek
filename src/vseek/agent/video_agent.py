@@ -251,5 +251,39 @@ class VSeekAgent(VLLMClient):
         Returns:
             List of indices sorted by similarity (highest first)
         """
-        raise NotImplementedError("Search subtitle is not implemented yet.")
-        return []
+        # Get text embedding for the search query
+        text_embedding = self.viclip.get_text_embedding(search_query)
+
+        # Get the device of the text embedding (likely GPU)
+        device = text_embedding.device
+
+        # Ensure text embedding is 1D [embedding_dim]
+        if text_embedding.dim() > 1:
+            text_embedding = text_embedding.squeeze()
+
+        # Normalize the text embedding
+        text_embedding = text_embedding / text_embedding.norm(dim=-1, keepdim=True)
+
+        # Get text embeddings for all subtitles
+        subtitle_embeddings = []
+        for subtitle in subtitles:
+            emb = self.viclip.get_text_embedding(subtitle)
+            emb_device = emb.to(device)  # Move to same device as query embedding
+            # Ensure embedding is 1D
+            if emb_device.dim() > 1:
+                emb_device = emb_device.squeeze()
+            emb_norm = emb_device / emb_device.norm(dim=-1, keepdim=True)
+            subtitle_embeddings.append(emb_norm)
+
+        subtitle_embeddings_tensor = torch.stack(
+            subtitle_embeddings
+        )  # Shape: [N, embedding_dim]
+
+        # Compute cosine similarities on GPU
+        # subtitle_embeddings_tensor: [N, D], text_embedding: [D] -> similarities: [N]
+        similarities = torch.matmul(subtitle_embeddings_tensor, text_embedding)
+
+        # Get indices sorted by similarity (descending order)
+        sorted_indices = torch.argsort(similarities, descending=True)
+
+        return sorted_indices.cpu().tolist()

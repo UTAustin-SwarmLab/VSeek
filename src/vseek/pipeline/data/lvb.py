@@ -1,5 +1,3 @@
-import copy
-import hashlib
 import json
 import os
 import shutil
@@ -115,65 +113,70 @@ class LongVideoBench(Manager):
         return [entry for entries in category_buckets.values() for entry in entries]
 
     def save_it_as_vseek_data(self, desired_interval_in_sec: int = 1):
-        data = self.load_data()
-        window_size = DATA_SETTING.window_size
-        for entry in tqdm(data):
-            if self.is_file_exists(window_size, entry["metadata"]["video_id"]):
-                continue
-            subtitles = json.load(open(entry["paths"]["subtitle_path"], "r"))
-            video = read_video(video_path=entry["paths"]["video_path"])
-            vclip = ViClip(
-                pretrained_model_path=VICLIP_SETTING.vclip_model_path,
-                gpu_number=VICLIP_SETTING.gpu_number,
-            )
-            frame_index = 0
-            window_index = 0
-            subtitle_index = 0
-            video_frames = VideoFrames(window_size=DATA_SETTING.window_size)
-            while True:
-                try:
-                    current_subtitle = subtitles[subtitle_index]
-                except IndexError:
-                    current_subtitle = subtitles[-1]
-                subtitle_start_timestamp, subtitle_end_timestamp = (
-                    current_subtitle["start"],
-                    current_subtitle["end"],
+        try:
+            data = self.load_data()
+            window_size = DATA_SETTING.window_size
+            for entry in tqdm(data):
+                if self.is_file_exists(window_size, entry["metadata"]["video_id"]):
+                    continue
+                subtitles = json.load(open(entry["paths"]["subtitle_path"], "r"))
+                video = read_video(video_path=entry["paths"]["video_path"])
+                vclip = ViClip(
+                    pretrained_model_path=VICLIP_SETTING.vclip_model_path,
+                    gpu_number=VICLIP_SETTING.gpu_number,
                 )
-                subtitle_text = current_subtitle["line"]
-
-                frame = video.get_next_frame(
-                    desired_interval_in_sec=desired_interval_in_sec
-                )
-                if frame is None:
-                    break
-
-                video_frames.add_frame(
-                    frame=SingleFrame(
-                        frame_idx=frame_index,
-                        real_video_index=video.current_frame_index,
-                        image=frame,
+                frame_index = 0
+                window_index = 0
+                subtitle_index = 0
+                video_frames = VideoFrames(window_size=DATA_SETTING.window_size)
+                while True:
+                    try:
+                        current_subtitle = subtitles[subtitle_index]
+                    except IndexError:
+                        current_subtitle = subtitles[-1]
+                    _, subtitle_end_timestamp = (
+                        current_subtitle["start"],
+                        current_subtitle["end"],
                     )
+                    subtitle_text = current_subtitle["line"]
+
+                    frame = video.get_next_frame(
+                        desired_interval_in_sec=desired_interval_in_sec
+                    )
+                    if frame is None:
+                        break
+
+                    video_frames.add_frame(
+                        frame=SingleFrame(
+                            frame_idx=frame_index,
+                            real_video_index=video.current_frame_index,
+                            image=frame,
+                        )
+                    )
+                    # Add subtitle
+                    frame_start_timestamp, frame_end_timestamp = video.current_timestamp
+                    if frame_start_timestamp >= subtitle_end_timestamp:
+                        subtitle_index += 1
+
+                    video_frames.add_subtitle(subtitle_text)
+                    if frame_index % window_size == 0 and frame_index != 0:
+                        frame_chunk = video_frames.get_frame_chunk(window_index)
+                        # Adding video embedding
+                        video_frames.add_embedding(vclip.get_feature(frame_chunk))
+                        window_index += 1
+                    frame_index += 1
+
+                # Saving data
+                dataset_name = "lvb"
+                unique_id = entry["metadata"]["video_id"]
+                dir_name = f"{dataset_name}_window_{window_size}"
+                file_name = f"{unique_id}.pkl"
+                output_path = Path(DATA_SETTING.output_dir).joinpath(
+                    dir_name, file_name
                 )
-                # Add subtitle
-                frame_start_timestamp, frame_end_timestamp = video.current_timestamp
-                if frame_start_timestamp >= subtitle_end_timestamp:
-                    subtitle_index += 1
-
-                video_frames.add_subtitle(subtitle_text)
-                if frame_index % window_size == 0 and frame_index != 0:
-                    frame_chunk = video_frames.get_frame_chunk(window_index)
-                    # Adding video embedding
-                    video_frames.add_embedding(vclip.get_feature(frame_chunk))
-                    window_index += 1
-                frame_index += 1
-
-            # Saving data
-            dataset_name = "lvb"
-            unique_id = entry["metadata"]["video_id"]
-            dir_name = f"{dataset_name}_window_{window_size}"
-            file_name = f"{unique_id}.pkl"
-            output_path = Path(DATA_SETTING.output_dir).joinpath(dir_name, file_name)
-            video_frames.save(str(output_path))
+                video_frames.save(str(output_path))
+        except Exception:
+            pass
 
     def is_file_exists(self, window_size: str, unique_id: str):
         dataset_name = "lvb"
@@ -190,67 +193,4 @@ class LongVideoBench(Manager):
                     shutil.rmtree(invalid_data_path)
         return False
 
-    def postprocess_data(self):
-        with open(os.path.join(self._dataset_path, "lvb_val.json"), "r") as f:
-            lvb_data = json.load(f)
-        with open(self._nsvs_path, "r") as f:
-            nsvs_data = json.load(f)
-
-        output_nsvqa = []  # nsvqa cropped video
-        output_full = []  # entire video
-        for entry_nsvs in tqdm(nsvs_data):
-            found = False
-            for entry in lvb_data:
-                if (
-                    entry["question"] == entry_nsvs["question"]
-                    and entry["id"] == entry_nsvs["metadata"]["id"]
-                ):
-                    found = True
-
-                    candidates = entry["candidates"]
-                    for i in range(5):
-                        if i < len(candidates):
-                            entry[f"option{i}"] = candidates[i]
-                        else:
-                            entry[f"option{i}"] = "N/A"
-
-                    entry_full = copy.deepcopy(entry)
-
-                    code = entry["question"] + entry["id"]
-                    id = hashlib.sha256(code.encode()).hexdigest()
-                    entry["id"] = id + "_0"
-                    entry["video_id"] = id
-                    entry["video_path"] = id + ".mp4"
-
-                    self.crop_video(
-                        entry_nsvs,
-                        save_path=os.path.join(
-                            self._output_path_nsvqa, "videos", entry["video_path"]
-                        ),
-                        hardset=False,
-                    )
-
-                    if os.path.exists(
-                        os.path.join(
-                            self._output_path_nsvqa, "videos", entry["video_path"]
-                        )
-                    ):  # if crop is successful
-                        # self.crop_video(
-                        #     entry_nsvs,
-                        #     save_path=os.path.join(self._output_path_position, "videos", entry["video_path"]),
-                        #     hardset=True
-                        # )
-
-                        output_nsvqa.append(entry)
-                        output_full.append(entry_full)
-
-            if found == False:
-                print(f"Entry not found for question: {entry_nsvs['question']}")
-
-        with open(os.path.join(self._output_path_nsvqa, "lvb_val.json"), "w") as f:
-            json.dump(output_nsvqa, f, indent=4)
-        # with open(os.path.join(self._output_path_position, "lvb_val.json"), "w") as f:
-        #     json.dump(output_nsvqa, f, indent=4)
-        with open(os.path.join(self._output_path_full, "lvb_val.json"), "w") as f:
-            json.dump(output_full, f, indent=4)
-            json.dump(output_full, f, indent=4)
+    def postprocess_data(self): ...
