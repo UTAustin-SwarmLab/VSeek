@@ -24,4 +24,3 @@ if __name__ =="__main__":
         window_size=DATA_SETTING.window_size,
     )
     video_frames.save(f"{OUTPUT_DIR}/video_frames.pkl")
-    

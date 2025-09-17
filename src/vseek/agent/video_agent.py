@@ -74,7 +74,7 @@ class VSeekAgent(VLLMClient):
         2. At each step, based on the video frames obtained so far, you must think carefully about the question and the current video frames, to decide whether you can answer the question directly or you need to search for the answer within the <think> and </think> tags.
         3. You must think inside <think> </think? tags, and reason about whether the current frames are sufficient to answer the question. If there are no frames that are relevant to the question, you need to search for the answer <search> and </search> tags.
         4. If you can definitively answer the question with the current information, provide the final answer inside <answer> and </answer> tags.
-        5. If you need more information to answer the question, issue a precise video search query inside <search> and </search> tags. Your query should help you find the next relevant segment of the video. Ensure that the search query is not too general, long, vague or repeated.
+        5. If you need more information to answer the question, issue a precise video search query inside <search> and </search> tags. Your query should help you find the next relevant segment of the video. Ensure that the search query is not too general, long, vague or repeated across turns.
         6. Alternatively, if there are subtitles mentioned in the question, you can use the subtitles to retrieve the frames corresponding to the subtitle by using the <search_subtitle> and </search_subtitle> tags.
         Each search query should be a concise (1–3 sentences), optimized video search query ONLY if you cannot answer. Include specific entities/objects/ and actions when available.
         7. Crucially, you must output exactly ONE tag from (<answer> or <search> or <search_subtitle>) per turn and a <think> tag. Do not provide both.
@@ -185,10 +185,14 @@ class VSeekAgent(VLLMClient):
                         is_found_answer=True,
                         answer=agent_output.answer,
                     )
-                else:
+                elif agent_output.search or agent_output.search_subtitle:
                     # search
-                    embeddings = video_frames.embeddings
-                    search_indices = self.search(embeddings, agent_output.search)
+                    
+                    if agent_output.search:
+                        embeddings = video_frames.embeddings
+                        search_indices = self.search_video(embeddings, agent_output.search)
+                    elif agent_output.search_subtitle:
+                        search_indices = self.search_subtitle(video_frames.subtitles, agent_output.search_subtitle)
                     print("Search indices: ", search_indices)
                     # Use the most relevant video segment for next iteration
                     if search_indices:
@@ -201,7 +205,9 @@ class VSeekAgent(VLLMClient):
                             is_found_answer=False,
                         )
 
-    def search(self, embeddings: list[torch.Tensor], search_query: str) -> list[int]:
+    def search_video(
+        self, embeddings: list[torch.Tensor], search_query: str
+    ) -> list[int]:
         """Search for the most similar visual embeddings to the text query.
 
         Args:
@@ -246,14 +252,49 @@ class VSeekAgent(VLLMClient):
 
         return sorted_indices.cpu().tolist()
 
-    def search_subtitle(self, subtitles: str, search_query: str) -> list[int]:
+    def search_subtitle(self, subtitles: list[str], search_query: str) -> list[int]:
         """Search for the most similar subtitle to the text query.
 
         Args:
-            subtitles: List of subtitles (strings)
+            subtitles: List of subtitles (list of strings)
             search_query: Text query to search for
 
         Returns:
             List of indices sorted by similarity (highest first)
         """
-        raise NotImplementedError("Search subtitle is not implemented yet.")
+        # Get text embedding for the search query
+        text_embedding = self.viclip.get_text_embedding(search_query)
+
+        # Get the device of the text embedding (likely GPU)
+        device = text_embedding.device
+
+        # Ensure text embedding is 1D [embedding_dim]
+        if text_embedding.dim() > 1:
+            text_embedding = text_embedding.squeeze()
+
+        # Normalize the text embedding
+        text_embedding = text_embedding / text_embedding.norm(dim=-1, keepdim=True)
+
+        # Get text embeddings for all subtitles
+        subtitle_embeddings = []
+        for subtitle in subtitles:
+            emb = self.viclip.get_text_embedding(subtitle)
+            emb_device = emb.to(device)  # Move to same device as query embedding
+            # Ensure embedding is 1D
+            if emb_device.dim() > 1:
+                emb_device = emb_device.squeeze()
+            emb_norm = emb_device / emb_device.norm(dim=-1, keepdim=True)
+            subtitle_embeddings.append(emb_norm)
+
+        subtitle_embeddings_tensor = torch.stack(
+            subtitle_embeddings
+        )  # Shape: [N, embedding_dim]
+
+        # Compute cosine similarities on GPU
+        # subtitle_embeddings_tensor: [N, D], text_embedding: [D] -> similarities: [N]
+        similarities = torch.matmul(subtitle_embeddings_tensor, text_embedding)
+
+        # Get indices sorted by similarity (descending order)
+        sorted_indices = torch.argsort(similarities, descending=True)
+
+        return sorted_indices.cpu().tolist()

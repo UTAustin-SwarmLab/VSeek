@@ -7,7 +7,7 @@ ENV_FILE_PATH = "/home/mc767728/repo/Swarmlab/VSeek-R1/.env"
 
 class DataSetting(BaseSettings):
     dataset_name: str = "LongVideoBench"
-    output_dir: str = "output/test"
+    output_dir: str = "/nas/mars/dataset/vseek/dataset"
     window_size: int = 10
 
     class Config:

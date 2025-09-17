@@ -58,14 +58,24 @@ def parse_response_with_regex(
                 f"Regex parser: Search field too long ({len(search.strip())} chars), truncating to 200 chars"
             )
             search = search.strip()[:197] + "..."  # Truncate and add ellipsis
+            
+        if search_subtitle and len(search_subtitle.strip()) > 200:
+            print(
+                f"Regex parser: Search subtitle field too long ({len(search_subtitle.strip())} chars), truncating to 200 chars"
+            )
+            search_subtitle = search_subtitle.strip()[:197] + "..."  # Truncate and add ellipsis
 
         # Ensure exactly one of answer or search is provided (XOR validation)
         has_answer = answer is not None and len(answer.strip()) > 0
         has_search = search is not None and len(search.strip()) > 0
-
-        if has_answer == has_search:  # Both true or both false
+        has_search_subtitle = search_subtitle is not None and len(search_subtitle.strip()) > 0
+        
+        # Check if exactly one of answer, search, or search_subtitle is provided
+        true_count = sum([has_answer, has_search, has_search_subtitle])
+        
+        if true_count != 1:  # Not exactly one true
             print(
-                f"Regex parser: XOR validation failed - has_answer: {has_answer}, has_search: {has_search}"
+                f"Regex parser: XOR validation failed - has_answer: {has_answer}, has_search: {has_search}, has_search_subtitle: {has_search_subtitle} (count: {true_count})"
             )
             if not just_thought:
                 return None
