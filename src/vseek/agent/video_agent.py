@@ -14,21 +14,36 @@ VICLIP_SETTING = ViClipSetting()
 class VSeekAgent(VLLMClient):
     def __init__(
         self,
-        api_key=None,
+        api_key='EMPTY',
         api_base=None,
         model=None,
+        max_image_width=256,
+        max_image_height=256,
+        image_quality=85,
     ):
         super().__init__(api_key=api_key, api_base=api_base, model=model)
         self.viclip = ViClip(
             pretrained_model_path=VICLIP_SETTING.vclip_model_path,
             gpu_number=VICLIP_SETTING.gpu_number,
         )
+        self.max_image_width = max_image_width
+        self.max_image_height = max_image_height
+        self.image_quality = image_quality
+
+    def _encode_frame(self, frame):
+        """Override parent method to use custom image dimensions and quality."""
+        return super()._encode_frame(
+            frame, 
+            max_width=self.max_image_width, 
+            max_height=self.max_image_height, 
+            quality=self.image_quality
+        )
 
     def run(
         self,
         data_input: DataInput,
         max_parse_attempts: int = 3,
-        max_reasoning_attempts: int = 10,
+        max_reasoning_attempts: int = 5,
     ) -> ReasoningTrajectory:
         video_frames = data_input.video
 
@@ -56,14 +71,14 @@ class VSeekAgent(VLLMClient):
         You are a video analysis assistant. You will be given a question and access to a video. Your task is to answer the question in a step-by-step manner by analyzing the video.
         **INSTRUCTIONS**:
         1. Read the user's question carefully.
-        2. At each step, based on the video frames obtained so far, you need to think carefully about the question and the current video frames, to decide whether you can answer the question directly or you need to search for the answer within the <think> and </think> tags.
-        3. Inside <think> tags, reason about whether the current frames are sufficient to answer the question. If there are no frames that are relevant to the question, you need to search for the answer <search> and </search> tags.
+        2. At each step, based on the video frames obtained so far, you must think carefully about the question and the current video frames, to decide whether you can answer the question directly or you need to search for the answer within the <think> and </think> tags.
+        3. You must think inside <think> </think? tags, and reason about whether the current frames are sufficient to answer the question. If there are no frames that are relevant to the question, you need to search for the answer <search> and </search> tags.
         4. If you can definitively answer the question with the current information, provide the final answer inside <answer> and </answer> tags.
-        5. If you need more information to answer the question, issue a precise video search query inside <search> and </search> tags. Your query should help you find the next relevant segment of the video.
+        5. If you need more information to answer the question, issue a precise video search query inside <search> and </search> tags. Your query should help you find the next relevant segment of the video. Ensure that the search query is not too general, long, vague or repeated across turns.
         6. Alternatively, if there are subtitles mentioned in the question, you can use the subtitles to retrieve the frames corresponding to the subtitle by using the <search_subtitle> and </search_subtitle> tags.
         Each search query should be a concise (1–3 sentences), optimized video search query ONLY if you cannot answer. Include specific entities/objects/ and actions when available.
-        7. Crucially, you must output exactly ONE tag (<answer> or <search> or <search_subtitle>) per turn. Do not provide both.
-        8. You will have access to the history of each turn so far.
+        7. Crucially, you must output exactly ONE tag from (<answer> or <search> or <search_subtitle>) per turn and a <think> tag. Do not provide both.
+        8. You will have access to the history of each turn so far. You can take a maximum of 4 turns to answer the question.
 
         **EXAMPLES**:
         EXAMPLE 1:
@@ -79,20 +94,9 @@ class VSeekAgent(VLLMClient):
         (After the second search, the agent receives frames of the chef pouring flour into the bowl.)
         Turn 3:
         <think>These frames clearly show the chef adding a white powder, which appears to be flour, into the bowl. This is the first ingredient. I can now answer the question.</think>
-        <answer>D.</answer>
+        <answer>D</answer>
 
-        EXAMPLE 2:
-        Question: What color is the car parked in the driveway? Options: A. Blue, B. Red, C. Green, D. Yellow
-
-        Turn 1:
-        <think>The question asks for the color of the car in the driveway. I have sufficient information to answer hence I need to locate the part of the video where the car is parked in the driveway.</think>
-        <search>a car parked in a driveway</search>
-        (After the first search, the agent receives frames of the car parked in the driveway.)
-        Turn 2:
-        <think>I have found the car parked in the driveway. I need to locate the part of the video where the color of the car is visible. The care is blue hence I can answer the question with the option A.</think>
-        <answer>A.</answer>
-
-        EXAMPLE 3: Temporal Reasoning 
+        EXAMPLE 2: Temporal Reasoning 
         Question: What does the person do right after picking up the red ball? Options: A.Put it in a box , B. Throw it to a dog, C. Put it on a shelf, D. Put it in a bag
 
         Turn 1:
@@ -101,9 +105,9 @@ class VSeekAgent(VLLMClient):
         (After the search, the agent receives frames of a person bending over and grabbing a red ball.)
         Turn 2:
         <think>I have found the event where the person picks up the red ball. Now I need to observe the immediate next action to answer the question. The immediate next action is throwing the ball to a dog hence I can answer the question with the option B.</think>
-        <answer>B.</answer>
+        <answer>B</answer>
         
-        EXAMPLE 4:
+        EXAMPLE 3:
         Question: What is the on the right of the dark haired woman wearing a hat when the subtitle 'you're interested in. is mentioned? Options: A. Door B. Computer, C. Lamp, D. Phone
         Turn 1:
         <think>I need to first find the moment the subtitle 'you're interested in.' is mentioned.</think>
@@ -111,7 +115,7 @@ class VSeekAgent(VLLMClient):
         (After the search, the agent receives frames of a dark haired woman wearing a hat.)
         Turn 2:
         <think>I have found the event where the subtitle 'you're interested in.' is mentioned. Now I need to observe the immediate next action to answer the question. The immediate next action is the dark haired woman wearing a hat hence I can answer the question with the option A.</think>
-        <answer>A.</answer>
+        <answer>A</answer>
 
         """
 
@@ -131,10 +135,12 @@ class VSeekAgent(VLLMClient):
                     }
                 ]
             else:
-                encoded_images = [
-                    self._encode_frame(frame)
-                    for frame in data_input.video.get_frame_chunk(video_window_idx)
-                ]
+                encoded_images = []
+                for idx in video_window_idx:
+                    encoded_images += [
+                        self._encode_frame(frame)
+                        for frame in data_input.video.get_frame_chunk(idx)
+                    ]
             # # Build the user message: a text prompt plus one image for each frame.
 
             for encoded in encoded_images:
@@ -144,13 +150,13 @@ class VSeekAgent(VLLMClient):
                         "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
                     }
                 )
-            message_content.append(user_content)
+            message_content.append({"role": "user", "content": user_content})
 
             chat_response = self.client.chat.completions.create(
                 model=self.model,
                 messages=message_content,
-                max_tokens=400,
-                temperature=0.0,
+                max_tokens=500,
+                temperature=0.2,
                 logprobs=True,
                 top_logprobs=20,
             )
@@ -177,15 +183,20 @@ class VSeekAgent(VLLMClient):
                     return ReasoningTrajectory(
                         reasoning_trajectory=reasoning_trajectory,
                         is_found_answer=True,
+                        answer=agent_output.answer,
                     )
-                else:
+                elif agent_output.search or agent_output.search_subtitle:
                     # search
-                    embeddings = video_frames.embeddings
-                    search_indices = self.search(embeddings, agent_output.search)
-
+                    
+                    if agent_output.search:
+                        embeddings = video_frames.embeddings
+                        search_indices = self.search_video(embeddings, agent_output.search)
+                    elif agent_output.search_subtitle:
+                        search_indices = self.search_subtitle(video_frames.subtitles, agent_output.search_subtitle)
+                    print("Search indices: ", search_indices)
                     # Use the most relevant video segment for next iteration
                     if search_indices:
-                        video_window_idx = search_indices[0]
+                        video_window_idx = search_indices[:1]
 
                     iteration += 1
                     if iteration >= max_reasoning_attempts:
@@ -194,7 +205,9 @@ class VSeekAgent(VLLMClient):
                             is_found_answer=False,
                         )
 
-    def search(self, embeddings: list[torch.Tensor], search_query: str) -> list[int]:
+    def search_video(
+        self, embeddings: list[torch.Tensor], search_query: str
+    ) -> list[int]:
         """Search for the most similar visual embeddings to the text query.
 
         Args:
@@ -239,14 +252,49 @@ class VSeekAgent(VLLMClient):
 
         return sorted_indices.cpu().tolist()
 
-    def search_subtitle(self, subtitles: str, search_query: str) -> list[int]:
+    def search_subtitle(self, subtitles: list[str], search_query: str) -> list[int]:
         """Search for the most similar subtitle to the text query.
 
         Args:
-            subtitles: List of subtitles (strings)
+            subtitles: List of subtitles (list of strings)
             search_query: Text query to search for
 
         Returns:
             List of indices sorted by similarity (highest first)
         """
-        raise NotImplementedError("Search subtitle is not implemented yet.")
+        # Get text embedding for the search query
+        text_embedding = self.viclip.get_text_embedding(search_query)
+
+        # Get the device of the text embedding (likely GPU)
+        device = text_embedding.device
+
+        # Ensure text embedding is 1D [embedding_dim]
+        if text_embedding.dim() > 1:
+            text_embedding = text_embedding.squeeze()
+
+        # Normalize the text embedding
+        text_embedding = text_embedding / text_embedding.norm(dim=-1, keepdim=True)
+
+        # Get text embeddings for all subtitles
+        subtitle_embeddings = []
+        for subtitle in subtitles:
+            emb = self.viclip.get_text_embedding(subtitle)
+            emb_device = emb.to(device)  # Move to same device as query embedding
+            # Ensure embedding is 1D
+            if emb_device.dim() > 1:
+                emb_device = emb_device.squeeze()
+            emb_norm = emb_device / emb_device.norm(dim=-1, keepdim=True)
+            subtitle_embeddings.append(emb_norm)
+
+        subtitle_embeddings_tensor = torch.stack(
+            subtitle_embeddings
+        )  # Shape: [N, embedding_dim]
+
+        # Compute cosine similarities on GPU
+        # subtitle_embeddings_tensor: [N, D], text_embedding: [D] -> similarities: [N]
+        similarities = torch.matmul(subtitle_embeddings_tensor, text_embedding)
+
+        # Get indices sorted by similarity (descending order)
+        sorted_indices = torch.argsort(similarities, descending=True)
+
+        return sorted_indices.cpu().tolist()

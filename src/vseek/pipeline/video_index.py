@@ -9,7 +9,6 @@ VICLIP_SETTING = ViClipSetting()
 def video_indexing_pipeline(
     video_path: str,
     desired_interval_in_sec: int = 1,
-    callback: callable = None,
     window_size: int = 10,
     gpu_number: int = 0,
 ):

@@ -29,7 +29,7 @@ class AgentThought(BaseModel):
 
 
 class AgentOutput(BaseModel):
-    thought: constr(strip_whitespace=True, min_length=5, max_length=400) = Field(
+    thought: constr(strip_whitespace=True, min_length=5, max_length=1000) = Field(
         description=(
             "A concise (1–3 sentences) high-level reasoning of how you interpret the question "
             "and decide whether you can answer directly or need to search. No step-by-step chain-of-thought."
@@ -37,7 +37,7 @@ class AgentOutput(BaseModel):
     )
 
     # Provide EXACTLY ONE of {answer, search}
-    answer: Optional[constr(strip_whitespace=True, min_length=1, max_length=100)] = (
+    answer: Optional[constr(strip_whitespace=True, min_length=1, max_length=200)] = (
         Field(
             default=None,
             description=(
@@ -47,13 +47,24 @@ class AgentOutput(BaseModel):
         )
     )
 
-    search: Optional[constr(strip_whitespace=True, min_length=3, max_length=400)] = (
+    search: Optional[constr(strip_whitespace=True, min_length=3, max_length=200)] = (
         Field(
             default=None,
             description=(
                 "A concise (1–3 sentences) final, optimized video search query ONLY if you cannot answer. "
                 "Include specific entities/objects/actions/time ranges when available; "
                 "If you provide 'search', 'answer' MUST be null."
+            ),
+        )
+    )
+    
+     # Provide EXACTLY ONE of {answer, search}
+    subtitle: Optional[constr(strip_whitespace=True, min_length=1, max_length=200)] = (
+        Field(
+            default=None,
+            description=(
+                "Direct, self-contained answer to the question. Provide this ONLY if you are confident. "
+                "If you provide 'answer', 'search' MUST be null."
             ),
         )
     )
@@ -83,4 +94,7 @@ class ReasoningTrajectory(BaseModel):
     )
     error_message: Optional[str] = Field(
         default=None, description="The error message of the reasoning trajectory"
+    )
+    answer: Optional[str] = Field(
+        default=None, description="The answer of the reasoning trajectory"
     )

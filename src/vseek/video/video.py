@@ -57,6 +57,7 @@ class Video:
                 self.all_frames = sequence_of_image[0]
         self.import_video(str(video_path))
         self.current_frame_index = 0
+        self.current_timestamp = (0.0, 0.0)
         self.video_ended = False
 
     def __str__(self) -> str:
@@ -230,21 +231,25 @@ class Video:
                 self.video_ended = True
                 return None  # No more frames or error occurred
 
-            # Update the current frame index for the next call
-            self.current_frame_index += frame_step
-
             frame_img = cv2.cvtColor(frame_img, cv2.COLOR_BGR2RGB)
 
         if self._read_format == VideoFormat.LIST_OF_ARRAY:
             if self.current_frame_index < len(self.all_frames):
                 frame_img = self.all_frames[self.current_frame_index]
-                self.current_frame_index += 1
             else:
                 # No more frames available.
                 self.video_ended = True
                 return None
 
+        # Calculate current timestamp (real video time stamp) BEFORE updating frame index
+        self.current_timestamp = self.get_current_timestamp()
         self.video_info.processed_frame_count += 1
+
+        # Update the current frame index for the next call
+        if self._read_format == VideoFormat.MP4:
+            self.current_frame_index += frame_step
+        elif self._read_format == VideoFormat.LIST_OF_ARRAY:
+            self.current_frame_index += 1
 
         return self.process_frame_image(
             frame_img=frame_img,
@@ -301,6 +306,52 @@ class Video:
         self.video_info.processed_fps = processed_fps
 
         return frame_step
+
+    def _seconds_to_timestamp(self, seconds: float) -> str:
+        """Convert seconds to HH:MM:SS format.
+
+        Args:
+            seconds (float): Time in seconds.
+
+        Returns:
+            str: Time in HH:MM:SS format.
+        """
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    def get_current_timestamp(self) -> tuple[str, str]:
+        """Calculate and return the current timestamp range (start, end) in HH:MM:SS format.
+
+        Returns:
+            tuple[str, str]: Start and end timestamp in HH:MM:SS format for the current frame.
+        """
+        if self._read_format == VideoFormat.MP4 and self.video_info.original_fps:
+            # For MP4 videos, calculate timestamp using current frame index and original FPS
+            frame_duration = 1.0 / self.video_info.original_fps
+            start_time = self.current_frame_index / self.video_info.original_fps
+            end_time = start_time + frame_duration
+            return (
+                self._seconds_to_timestamp(start_time),
+                self._seconds_to_timestamp(end_time),
+            )
+        else:
+            # For list of arrays or videos without FPS info, use frame index as timestamp
+            start_time = float(self.current_frame_index)
+            end_time = float(self.current_frame_index + 1)
+            return (
+                self._seconds_to_timestamp(start_time),
+                self._seconds_to_timestamp(end_time),
+            )
+
+    def get_start_end_timestamp(self) -> tuple[float, float]:
+        """Get the start and end timestamp of the video.
+
+        Returns:
+            tuple[float, float]: The start and end timestamp of the video.
+        """
+        return self.video_info.start_timestamp, self.video_info.end_timestamp
 
     def insert_annotation_to_current_frame(self, annotations: list[str]) -> None:
         """Insert annotations to the current frame.

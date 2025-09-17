@@ -20,9 +20,21 @@ class VLLMClient:
 
     # def _encode_frame(self, frame):
     #     return base64.b64encode(frame.tobytes()).decode("utf-8")
-    def _encode_frame(self, frame):
+    def _encode_frame(self, frame, max_width=512, max_height=512, quality=85):
+        # Resize frame to reduce aspect ratio and make it easier to parse
+        height, width = frame.shape[:2]
+        # Calculate scaling factor to fit within max dimensions while maintaining aspect ratio
+        scale = min(max_width / width, max_height / height)
+        
+        # Only resize if the image is larger than max dimensions
+        if scale < 1.0:
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+        
         # Encode a uint8 numpy array (image) as a JPEG and then base64 encode it.
-        ret, buffer = cv2.imencode(".jpg", frame)
+        encode_params = [cv2.IMWRITE_JPEG_QUALITY, quality]
+        ret, buffer = cv2.imencode(".jpg", frame, encode_params)
         if not ret:
             raise ValueError("Could not encode frame")
         return base64.b64encode(buffer).decode("utf-8")

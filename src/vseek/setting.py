@@ -7,7 +7,7 @@ ENV_FILE_PATH = "/home/mc767728/repo/Swarmlab/VSeek-R1/.env"
 
 class DataSetting(BaseSettings):
     dataset_name: str = "LongVideoBench"
-    output_dir: str = "output/test"
+    output_dir: str = "/nas/mars/dataset/vseek/dataset"
     window_size: int = 10
 
     class Config:
@@ -32,8 +32,8 @@ class ViClipSetting(BaseSettings):
 
 
 class VLLMSetting(BaseSettings):
-    openai_api_key: Optional[str] = None
-    api_base: str = "http://localhost:8001/v1"
+    openai_api_key: Optional[str] = "EMPTY"
+    api_base: str = "http://localhost:8002/v1"
     model: str = "Qwen/Qwen2.5-VL-7B-Instruct"
 
     class Config:
