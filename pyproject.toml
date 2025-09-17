@@ -18,6 +18,7 @@ dependencies = [
     "torchvision",
     "vllm>=0.10.2",
     "langchain>=0.3.27",
+    "v>=1",
 ]
 
 [build-system]

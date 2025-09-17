@@ -194,7 +194,9 @@ class VSeekAgent(VLLMClient):
                             is_found_answer=False,
                         )
 
-    def search(self, embeddings: list[torch.Tensor], search_query: str) -> list[int]:
+    def search_video(
+        self, embeddings: list[torch.Tensor], search_query: str
+    ) -> list[int]:
         """Search for the most similar visual embeddings to the text query.
 
         Args:
@@ -239,14 +241,15 @@ class VSeekAgent(VLLMClient):
 
         return sorted_indices.cpu().tolist()
 
-    def search_subtitle(self, subtitles: str, search_query: str) -> list[int]:
+    def search_subtitle(self, subtitles: list[str], search_query: str) -> list[int]:
         """Search for the most similar subtitle to the text query.
 
         Args:
-            subtitles: List of subtitles (strings)
+            subtitles: List of subtitles (list of strings)
             search_query: Text query to search for
 
         Returns:
             List of indices sorted by similarity (highest first)
         """
         raise NotImplementedError("Search subtitle is not implemented yet.")
+        return []

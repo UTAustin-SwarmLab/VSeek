@@ -29,8 +29,13 @@ class VideoFrames(BaseModel):
     embeddings: list[torch.Tensor] = Field(
         default_factory=list, description="The list of embeddings"
     )
+    subtitles: list[str] = Field(
+        default_factory=list, description="The list of captions"
+    )
     # Frame windown operation
     frames_by_window: dict[int, list[SingleFrame]] = Field(default_factory=dict)
+    subtitles_by_window: dict[int, list[str]] = Field(default_factory=dict)
+    unique_subtitles_by_window: dict[int, str] = Field(default_factory=dict)
     window_size: Optional[int] = Field(None, description="The size of the window")
     window_index_map: dict[int, Tuple[int, int]] = Field(default_factory=dict)
     window_index: int = 0
@@ -45,6 +50,27 @@ class VideoFrames(BaseModel):
                 self.frames_by_window[self.window_index] = self.frames
                 self.window_index += 1
                 self.frames = []
+
+    def add_subtitle(self, subtitle: str) -> None:
+        """Add a subtitle to the VideoFrames.
+
+        You must add frames before adding subtitles.
+
+        Args:
+            subtitle: The subtitle to add
+        """
+        self.subtitles.append(subtitle)
+        if self.window_size:
+            if len(self.subtitles) == self.window_size:
+                window_index = self.window_index - 1
+                start_idx, end_idx = self.get_window_range(window_index)
+
+                self.subtitles_by_window[window_index] = self.subtitles
+                unique_subtitles = list(dict.fromkeys(self.subtitles))
+                self.unique_subtitles_by_window[window_index] = ".".join(
+                    unique_subtitles
+                )
+                self.subtitles = []
 
     def add_embedding(self, embedding: torch.Tensor) -> None:
         self.embeddings.append(embedding)
