@@ -7,7 +7,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from vseek.data.frame import SingleFrame, VideoFrames
-from vseek.pipeline.data.manager import Manager
+from data.manager import Manager
 from vseek.setting import DataSetting, ViClipSetting
 from vseek.video.read_video import read_video
 from vseek.video_embedding.video_clip import ViClip
@@ -74,9 +74,8 @@ class LongVideoBench(Manager):
                     )
                     question = f"{item['question']} here are the candidates: "
                     for choice_idx, candidate in enumerate(item["candidates"]):
-                        choice_idx += 1
-                        question += f"\n{choice_idx + 1}. {candidate}"
-                    question += "It's a multiple choice question. You must choose the correct answer as a number."
+                        question += f"\n{choice_idx}. {candidate}"
+                    question += "\n It's a multiple choice question. You must choose the correct answer as a number."
 
                     entry = {
                         "question": question,
