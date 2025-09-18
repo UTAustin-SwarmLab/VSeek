@@ -75,10 +75,14 @@ class AgentOutput(BaseModel):
     def _xor_answer_search(self):
         has_answer = self.answer is not None and len(self.answer.strip()) > 0
         has_search = self.search is not None and len(self.search.strip()) > 0
-        if has_answer == has_search:
+        has_search_subtitle = self.subtitle is not None and len(self.subtitle.strip()) > 0
+        true_count = sum([has_answer, has_search, has_search_subtitle])
+        print(f"True count: {true_count}")
+        if true_count != 1:
             raise ValueError(
-                "Exactly one of 'answer' or 'search' must be provided (XOR)."
+                "Exactly one of 'answer' or 'search' or 'search_subtitle' must be provided (XOR)."
             )
+
         return self
 
 

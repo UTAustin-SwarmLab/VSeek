@@ -35,9 +35,9 @@ def parse_response_with_regex(
         search_subtitle = search_match.group(1  ).strip() if search_match else None
 
         # Validate that we have the required fields
-        if not thought or len(thought.strip()) < 5:
-            print("Regex parser: Invalid or missing thought field")
-            return None
+        # if not thought or len(thought.strip()) < 5:
+        #     print("Regex parser: Invalid or missing thought field")
+        #     return None
 
         if thought and len(thought.strip()) > 1000:
             print(
@@ -72,6 +72,7 @@ def parse_response_with_regex(
         
         # Check if exactly one of answer, search, or search_subtitle is provided
         true_count = sum([has_answer, has_search, has_search_subtitle])
+        print(f"True count: {true_count}")
         
         if true_count != 1:  # Not exactly one true
             print(
@@ -84,7 +85,7 @@ def parse_response_with_regex(
                     thought=thought.strip(),
                     answer="",
                     search="",
-                    search_subtitle="",
+                    subtitle="",
                 )
 
         # Create AgentOutput object
@@ -92,7 +93,7 @@ def parse_response_with_regex(
             thought=thought.strip(),
             answer=answer.strip() if answer else None,
             search=search.strip() if search else None,
-            search_subtitle=search_subtitle.strip() if search_subtitle else None,
+            subtitle=search_subtitle.strip() if search_subtitle else None,
         )
 
     except Exception as e:
