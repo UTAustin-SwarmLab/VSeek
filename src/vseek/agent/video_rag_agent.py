@@ -152,9 +152,13 @@ class VideoRAGAgent(VLLMClient):
 
         video_window_idx = 0
         embeddings = video_frames.embeddings
-        search_indices = self.search_video(embeddings, data_input.question)
+        question_substrring = data_input.question.split("here are the candidates:")[0]
+
+
+        search_indices = self.search_video(embeddings, question_substrring)
         #TODO: make it a field in the data input
-        video_window_idx = search_indices[:5]
+        video_window_idx = sorted(search_indices[:5])
+        print("video_window_idx: ", video_window_idx)
         user_content = [
                     {
                         "type": "text",
