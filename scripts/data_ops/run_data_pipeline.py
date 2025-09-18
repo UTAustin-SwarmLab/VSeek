@@ -1,4 +1,4 @@
-from vseek.pipeline.data.lvb import LongVideoBench
+from data.lvb import LongVideoBench
 
 if __name__ == "__main__":
     dataset = LongVideoBench()

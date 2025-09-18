@@ -49,4 +49,5 @@ if __name__ == "__main__":
         # VLM(V, Q, A)
         trajectory = vlm_client.run(data_input)
         answer.append(trajectory.answer)
+        
     print(answer)

@@ -7,7 +7,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from vseek.data.frame import SingleFrame, VideoFrames
-from vseek.pipeline.data.manager import Manager
+from data.manager import Manager
 from vseek.setting import DataSetting, ViClipSetting
 from vseek.video.read_video import read_video
 from vseek.video_embedding.video_clip import ViClip
@@ -24,8 +24,6 @@ class LongVideoBench(Manager):
         self._nsvs_path = (
             "/nas/mars/experiment_result/nsvqa/5_full_output/longvideobench_output.json"
         )
-        self._output_path_nsvqa = "/nas/mars/experiment_result/nsvqa/6_formatted_output/longvideobench_nsvqa_all_categories"
-        self._output_path_full = "/nas/mars/experiment_result/nsvqa/6_formatted_output/longvideobench_full_all_categories"
         # self._output_path_position = "/nas/mars/experiment_result/nsvqa/6_formatted_output/longvideobench_position"
         self._categories = [
             "S2E",
@@ -76,9 +74,8 @@ class LongVideoBench(Manager):
                     )
                     question = f"{item['question']} here are the candidates: "
                     for choice_idx, candidate in enumerate(item["candidates"]):
-                        choice_idx += 1
-                        question += f"\n{choice_idx + 1}. {candidate}"
-                    question += "It's a multiple choice question. You must choose the correct answer as a number."
+                        question += f"\n{choice_idx}. {candidate}"
+                    question += "\n It's a multiple choice question. You must choose the correct answer as a number."
 
                     entry = {
                         "question": question,
