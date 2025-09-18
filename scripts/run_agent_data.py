@@ -1,16 +1,14 @@
 from pathlib import Path
-import json
-import datetime
-import os
 
 from tqdm import tqdm
-from vseek.data.exp_io import DataInput
-from vseek.data.frame import VideoFrames
-from vseek.setting import DataSetting, VLLMSetting
-from vseek.agent.video_agent import VSeekAgent
 
 # LongVideoBench dataset helper
 from data.lvb import LongVideoBench
+from vseek.agent.video_agent import VSeekAgent
+from vseek.data.exp_io import DataInput
+from vseek.data.frame import VideoFrames
+from vseek.setting import DataSetting, VLLMSetting
+from vseek.utils.logging import log_result, log_summary, setup_logging
 
 VLLM_SETTING = VLLMSetting()
 DATA_SETTING = DataSetting()
@@ -26,10 +24,11 @@ def build_options_string(candidates: list[str]) -> str:
 def parse_answer(answer: str) -> str:
     """Parse the agent's answer to extract the choice number."""
     import re
+
     if answer is None:
         return ""
     # Try to find a number in the answer
-    numbers = re.findall(r'\d+', answer)
+    numbers = re.findall(r"\d+", answer)
     if numbers:
         return numbers[0]  # Return the first number found
     return ""
@@ -39,27 +38,24 @@ def calculate_accuracy(results: list[dict]) -> float:
     """Calculate accuracy by comparing predicted vs ground truth choices."""
     if not results:
         return 0.0
-    
+
     correct = 0
     for result in results:
         pred = parse_answer(result["pred"])
         gt = str(result["gt"])
         if pred == gt:
             correct += 1
-    
+
     return correct / len(results)
-
-
-
 
 
 if __name__ == "__main__":
     # Setup logging
     json_log_path, detailed_log_path = setup_logging()
-    print(f"Logging results to:")
+    print("Logging results to:")
     print(f"  JSON: {json_log_path}")
     print(f"  Detailed: {detailed_log_path}")
-    
+
     lvb = LongVideoBench()
     entries = lvb.load_data()
 
@@ -115,19 +111,26 @@ if __name__ == "__main__":
             "parsed_pred": parse_answer(pred),
         }
         results.append(result)
-        
+
         # Log each result immediately
-        log_result(json_log_path, detailed_log_path, result, question, candidates, options_str)
-        
-        print(f"Video {video_id}: Pred='{pred}' -> Parsed='{result['parsed_pred']}', GT='{correct_choice}'")
+        log_result(
+            json_log_path, detailed_log_path, result, question, candidates, options_str
+        )
+
+        print(
+            f"Video {video_id}: Pred='{pred}' -> Parsed='{result['parsed_pred']}', GT='{correct_choice}'"
+        )
 
     # Calculate and display accuracy
     accuracy = calculate_accuracy(results)
     print(f"\nFinished. Total evaluated: {len(results)}")
-    print(f"Accuracy: {accuracy:.3f} ({sum(1 for r in results if r['parsed_pred'] == r['gt'])}/{len(results)})")
-    
+    print(
+        f"Accuracy: {accuracy:.3f} ({sum(1 for r in results if r['parsed_pred'] == r['gt'])}/{len(results)})"
+    )
+
     # Log final summary
     log_summary(json_log_path, detailed_log_path, results, accuracy)
-    print(f"\nResults logged to:")
+    print("\nResults logged to:")
     print(f"  JSON: {json_log_path}")
+    print(f"  Detailed: {detailed_log_path}")
     print(f"  Detailed: {detailed_log_path}")
