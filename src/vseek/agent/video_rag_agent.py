@@ -20,6 +20,7 @@ class VideoRAGAgent(VLLMClient):
         max_image_width=256,
         max_image_height=256,
         image_quality=85,
+        temperature=0.5,
     ):
         super().__init__(api_key=api_key, api_base=api_base, model=model)
         self.viclip = ViClip(
@@ -29,6 +30,7 @@ class VideoRAGAgent(VLLMClient):
         self.max_image_width = max_image_width
         self.max_image_height = max_image_height
         self.image_quality = image_quality
+        self.temperature = temperature
 
     def _encode_frame(self, frame):
         """Override parent method to use custom image dimensions and quality."""
@@ -186,7 +188,7 @@ class VideoRAGAgent(VLLMClient):
             model=self.model,
             messages=message_content,
             max_tokens=500,
-            temperature=0.5,
+            temperature=self.temperature,
             logprobs=True,
             top_logprobs=20,
         )

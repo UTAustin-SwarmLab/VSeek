@@ -82,7 +82,7 @@ def parse_response_with_regex(
                 return None
             else:
                 return AgentOutput(
-                    thought=thought.strip(),
+                    thought=thought.strip() if thought else "",
                     answer="",
                     search="",
                     subtitle="",
@@ -90,7 +90,7 @@ def parse_response_with_regex(
 
         # Create AgentOutput object
         return AgentOutput(
-            thought=thought.strip(),
+            thought=thought.strip() if thought else "",
             answer=answer.strip() if answer else None,
             search=search.strip() if search else None,
             subtitle=search_subtitle.strip() if search_subtitle else None,

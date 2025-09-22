@@ -20,6 +20,8 @@ class VSeekAgent(VLLMClient):
         max_image_width=256,
         max_image_height=256,
         image_quality=85,
+        topk=1,
+        temperature=0.5,
     ):
         super().__init__(api_key=api_key, api_base=api_base, model=model)
         self.viclip = ViClip(
@@ -29,6 +31,9 @@ class VSeekAgent(VLLMClient):
         self.max_image_width = max_image_width
         self.max_image_height = max_image_height
         self.image_quality = image_quality
+        self.topk = topk
+        self.temperature = temperature
+        # Tradeoff between topk and number of effective frames from each window
 
     def _encode_frame(self, frame):
         """Override parent method to use custom image dimensions and quality."""
@@ -158,6 +163,19 @@ class VSeekAgent(VLLMClient):
         Turn 2:
         <think>I have found the event where the person picks up the red ball. Now I need to observe the immediate next action to answer the question. The immediate next action is throwing the ball to a dog hence I can answer the question with the option B.</think>
         <answer>B</answer>
+        
+        EXAMPLE 3: Repetition
+        Question: What does the person do right after picking up the red ball? Options: A.Put it in a box , B. Throw it to a dog, C. Put it on a shelf, D. Put it in a bag
+
+        Turn 1:
+        <think>I need to first find the moment the person picks up the red ball.</think>
+        <search>a person picking up a red ball</search>
+        (After the search, the agent does not receive any relevant frames.)
+        Turn 2:
+        <think>I don't have enough context as the provided video does not include any relevant frames. I need to write a better search query. </think>
+        <search>a person wearing tshirtpicking up a red ball in the room</search>
+        <think>I have found the event where the person picks up the red ball. The immediate next action is throwing the ball to a dog hence I can answer the question with the option B.</think>
+        <answer>B</answer>
         """
         
         iteration = 0
@@ -197,7 +215,7 @@ class VSeekAgent(VLLMClient):
                 model=self.model,
                 messages=message_content,
                 max_tokens=500,
-                temperature=0.5,
+                temperature=self.temperature,
                 logprobs=True,
                 top_logprobs=20,
             )
@@ -237,7 +255,7 @@ class VSeekAgent(VLLMClient):
                     print("Search indices: ", search_indices)
                     # Use the most relevant video segment for next iteration
                     if search_indices:
-                        video_window_idx = search_indices[:1]
+                        video_window_idx = search_indices[:self.topk]
 
                     iteration += 1
                     if iteration >= max_reasoning_attempts:
