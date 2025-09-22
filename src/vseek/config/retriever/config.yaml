@@ -1,0 +1,13 @@
+
+retriever:
+  server_url: "http://127.0.0.1:9000"
+  index_path: "/nas/mars/dataset/vseek/dataset"
+  topk: 1
+  retriever_name: "ViClip"
+  retriever_model: "ViClip"
+  retrieval_model_path: "/nas/mars/model_weights/viclip/ViClip-InternVid-10M-FLT.pth"
+  text_encoder_model_path: "/nas/mars/model_weights/viclip/bpe_simple_vocab_16e6.txt.gz"
+  gpu_number: 0
+  faiss_gpu: false
+  dataset_name: "lvb"
+  window_size: 10
