@@ -55,10 +55,10 @@ def calculate_accuracy(results: list[dict]) -> float:
 
 if __name__ == "__main__":
     # Setup logging
-    json_log_path, detailed_log_path = setup_logging()
+    # json_log_path, detailed_log_path = setup_logging()
     print(f"Logging results to:")
-    print(f"  JSON: {json_log_path}")
-    print(f"  Detailed: {detailed_log_path}")
+    # print(f"  JSON: {json_log_path}")
+    # print(f"  Detailed: {detailed_log_path}")
     
     lvb = LongVideoBench()
     entries = lvb.load_data()
@@ -103,6 +103,7 @@ if __name__ == "__main__":
             max_image_width=384,
             max_image_height=384,
             image_quality=90,
+            temperature=1.0,
         )
 
         trajectory = vlm_client.run(data_input)
@@ -117,7 +118,7 @@ if __name__ == "__main__":
         results.append(result)
         
         # Log each result immediately
-        log_result(json_log_path, detailed_log_path, result, question, candidates, options_str)
+        # log_result(json_log_path, detailed_log_path, result, question, candidates, options_str)
         
         print(f"Video {video_id}: Pred='{pred}' -> Parsed='{result['parsed_pred']}', GT='{correct_choice}'")
 
@@ -127,7 +128,7 @@ if __name__ == "__main__":
     print(f"Accuracy: {accuracy:.3f} ({sum(1 for r in results if r['parsed_pred'] == r['gt'])}/{len(results)})")
     
     # Log final summary
-    log_summary(json_log_path, detailed_log_path, results, accuracy)
-    print(f"\nResults logged to:")
-    print(f"  JSON: {json_log_path}")
-    print(f"  Detailed: {detailed_log_path}")
+    # log_summary(json_log_path, detailed_log_path, results, accuracy)
+    # print(f"\nResults logged to:")
+    # print(f"  JSON: {json_log_path}")
+    # print(f"  Detailed: {detailed_log_path}")
