@@ -73,7 +73,7 @@ def process_subtitles(subtitles: list[dict],
         subtitle_end_idx = end_idx * original_fps
         if subtitle_end_idx < 0:
             continue
-        if subtitle_start_idx > desired_frame_count:
+        if subtitle_start_idx > desired_frame_count*frame_step:
             break
         subtitle_start_idx = int(subtitle_start_idx/frame_step)
         subtitle_end_idx = int(subtitle_end_idx/frame_step)
@@ -277,7 +277,7 @@ class LongVideoBench(Manager):
                                                       desired_frame_count,
                                                       frame_step)
 
-                    # print(f"Processed subtitles {all_subtitles}")
+                    print(f"Processed subtitles {all_subtitles}")
                     video_frames.add_all_subtitles(all_subtitles)
                     video_frames.partition_subtitles()
                     print(f"Added {len(all_subtitles)} subtitles")
