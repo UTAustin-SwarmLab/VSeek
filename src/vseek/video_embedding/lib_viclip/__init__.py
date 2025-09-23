@@ -39,10 +39,18 @@ def normalize(data):
     return (data/255.0-v_mean)/v_std
 
 def frames2tensor(vid_list, fnum=8, target_size=(224, 224), device=torch.device('cuda')):
-    assert(len(vid_list) >= fnum)
-    step = len(vid_list) // fnum
-    vid_list = vid_list[::step][:fnum]
-    vid_list = [cv2.resize(x[:,:,::-1], target_size) for x in vid_list]
+    # Ensure we have frames and exactly fnum items by sampling or padding
+    n = len(vid_list)
+    if n == 0:
+        raise ValueError("frames2tensor received an empty vid_list")
+    if n >= fnum:
+        step = max(1, n // fnum)
+        sampled = vid_list[::step][:fnum]
+    else:
+        sampled = list(vid_list)
+        sampled.extend([sampled[-1]] * (fnum - n))
+
+    vid_list = [cv2.resize(x[:,:,::-1], target_size) for x in sampled]
     vid_tube = [np.expand_dims(normalize(x), axis=(0, 1)) for x in vid_list]
     vid_tube = np.concatenate(vid_tube, axis=1)
     vid_tube = np.transpose(vid_tube, (0, 1, 4, 2, 3))
