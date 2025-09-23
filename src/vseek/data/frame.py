@@ -17,6 +17,9 @@ except Exception:
     _HAS_DECORD = False
 
 
+def flatten(xss):
+    return [x for xs in xss for x in xs]
+
 class SingleFrame(BaseModel):
     """Frame class."""
 
@@ -48,7 +51,7 @@ class VideoFrames(BaseModel):
     # Frame windown operation
     frames_by_window: dict[int, list[np.ndarray]] = Field(default_factory=dict)
     subtitles_by_window: dict[int, list[str]] = Field(default_factory=dict)
-    unique_subtitles_by_window: dict[int, str] = Field(default_factory=dict)
+    unique_subtitles_by_window: dict[int, list[str]] = Field(default_factory=dict)
     window_size: Optional[int] = Field(None, description="The size of the window")
     window_index_map: dict[int, Tuple[int, int]] = Field(default_factory=dict)
     window_by_subtitle: dict[str, list[int]] = Field(default_factory=dict)
@@ -88,10 +91,12 @@ class VideoFrames(BaseModel):
         
         if self.window_size:
             for i in range(0, len(self.all_subtitles), self.window_size):
-                self.subtitle_by_window[i] = sum(self.all_subtitles[i:i+self.window_size], [])
-                self.unique_subtitles_by_window[i] = list(set(self.subtitle_by_window[i]))
+                self.subtitles_by_window[i] = flatten(self.all_subtitles[i:i+self.window_size])
+
+                self.unique_subtitles_by_window[i] = list(set(self.subtitles_by_window[i]))
+                print(f"Subtitles by window {i} {len(self.subtitles_by_window[i])} {len(self.unique_subtitles_by_window[i])}")
                 for sub in self.unique_subtitles_by_window[i]:
-                    if sub not in self.subtitle_by_frame:
+                    if sub not in self.window_by_subtitle:
                         self.window_by_subtitle[sub] = [i]
                     else:
                         self.window_by_subtitle[sub].append(i)
