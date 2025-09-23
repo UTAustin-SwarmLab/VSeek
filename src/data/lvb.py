@@ -17,6 +17,52 @@ VICLIP_SETTING = ViClipSetting()
 DATA_SETTING = DataSetting()
 
 
+def convert_time_to_frame(time: str, fps: int):
+    hrs, mins, secs = time.split(":")
+    hrs = int(hrs)
+    mins = int(mins)
+    secs = int(secs)
+    ms= time.split(".")[1]
+    return (hrs * 3600 + mins * 60 + secs + ms / 1000) * fps
+    
+def process_subtitles(subtitles: list[dict], starting_timestamp, original_fps, original_frame_count, original_duration, desired_frame_count, frame_step):
+    # Returns a list of per frame subtitles
+
+    all_subtitles = [[] for _ in range(desired_frame_count)]
+    
+    subtitle_index = 0
+
+    for frame_idx in range(desired_frame_count):
+
+
+        # next_start_idx, next_end_idx = next_subtitle["start"], next_subtitle["end"]
+        
+        annotated = False
+        while not annotated:
+            subtitle = subtitles[subtitle_index]
+            # next_subtitle = subtitles[subtitle_index + 1]
+            start_idx, end_idx = subtitle["start"], subtitle["end"]
+            subtitle_start_idx = int(convert_time_to_frame(start_idx, original_fps))
+            subtitle_end_idx = int(convert_time_to_frame(end_idx, original_fps))
+
+            original_frame_idx = frame_idx - starting_timestamp
+            if original_frame_idx < 0:
+                annotated = True
+                continue
+
+            if original_frame_idx < subtitle_start_idx:
+                annotated = True
+                continue
+            elif original_frame_idx > subtitle_end_idx:
+                subtitle_index += 1
+            
+            elif original_frame_idx >= subtitle_start_idx and original_frame_idx <= subtitle_end_idx:
+                annotated = True
+                all_subtitles[original_frame_idx].append(subtitle)
+        
+
+    return all_subtitles
+    
 class LongVideoBench(Manager):
     def __init__(self):
         self._dataset_path = "/nas/mars/dataset/longvideobench/LongVideoBench/"
@@ -109,6 +155,9 @@ class LongVideoBench(Manager):
         # Flatten list of all selected entries from each category
         return [entry for entries in category_buckets.values() for entry in entries]
 
+    
+
+
     def save_it_as_vseek_data(self, desired_interval_in_sec: int = 1):
         try:
             data = self.load_data()
@@ -126,42 +175,69 @@ class LongVideoBench(Manager):
                 window_index = 0
                 subtitle_index = 0
                 video_frames = VideoFrames(window_size=DATA_SETTING.window_size)
-                while True:
-                    try:
-                        current_subtitle = subtitles[subtitle_index]
-                    except IndexError:
-                        current_subtitle = subtitles[-1]
-                    _, subtitle_end_timestamp = (
-                        current_subtitle["start"],
-                        current_subtitle["end"],
-                    )
-                    subtitle_text = current_subtitle["line"]
+                
+                all_frames = video.get_all_frames_of_video(desired_interval_in_sec=desired_interval_in_sec)
+                video_frames.add_all_frames(all_frames)
+                video_frames.partition_frames()
+                
+                original_fps = video.video_info.original_fps
+                original_frame_count = video.video_info.original_frame_count
+                original_duration = video.video_info.original_duration
+                desired_frame_count = video.video_info.processed_frame_count
+                frame_step = video.video_info.frame_step
+                
+                all_subtitles = self.process_subtitles(subtitles, entry["metadata"]["starting_timestamp_for_subtitles"], original_fps, original_frame_count, original_duration, desired_frame_count, frame_step)
+                video_frames.add_all_subtitles(all_subtitles)
+                video_frames.partition_subtitles()
+                
+                all_unique_subtitles = video_frames.window_by_subtitle.keys()
+                
+                
+                for window_idx in video_frames.frames_by_window.keys():
+                    frame_chunk = video_frames.get_frame_chunk(window_idx)
+                    video_frames.add_embedding(vclip.get_feature(frame_chunk))
+                
+                for subtitle in all_unique_subtitles:
+                    subtitle_chunk = video_frames.window_by_subtitle[subtitle]
+                    video_frames.add_subtitle_embedding(vclip.get_text_embedding(subtitle_chunk))
+                    
+                
+                # while True:
+                #     try:
+                #         current_subtitle = subtitles[subtitle_index]
+                #     except IndexError:
+                #         current_subtitle = subtitles[-1]
+                #     _, subtitle_end_timestamp = (
+                #         current_subtitle["start"],
+                #         current_subtitle["end"],
+                #     )
+                #     subtitle_text = current_subtitle["line"]
 
-                    frame = video.get_next_frame(
-                        desired_interval_in_sec=desired_interval_in_sec
-                    )
-                    if frame is None:
-                        break
+                #     frame = video.get_next_frame(
+                #         desired_interval_in_sec=desired_interval_in_sec
+                #     )
+                #     if frame is None:
+                #         break
 
-                    video_frames.add_frame(
-                        frame=SingleFrame(
-                            frame_idx=frame_index,
-                            real_video_index=video.current_frame_index,
-                            image=frame,
-                        )
-                    )
-                    # Add subtitle
-                    frame_start_timestamp, frame_end_timestamp = video.current_timestamp
-                    if frame_start_timestamp >= subtitle_end_timestamp:
-                        subtitle_index += 1
+                #     # video_frames.add_frame(
+                #     #     frame=SingleFrame(
+                #     #         frame_idx=frame_index,
+                #     #         real_video_index=video.current_frame_index,
+                #     #         image=frame,
+                #     #     )
+                #     # )
+                #     # Add subtitle
+                #     frame_start_timestamp, frame_end_timestamp = video.current_timestamp
+                #     if frame_start_timestamp >= subtitle_end_timestamp:
+                #         subtitle_index += 1
 
-                    video_frames.add_subtitle(subtitle_text)
-                    if frame_index % window_size == 0 and frame_index != 0:
-                        frame_chunk = video_frames.get_frame_chunk(window_index)
-                        # Adding video embedding
-                        video_frames.add_embedding(vclip.get_feature(frame_chunk))
-                        window_index += 1
-                    frame_index += 1
+                #     video_frames.add_subtitle(subtitle_text)
+                #     if frame_index % window_size == 0 and frame_index != 0:
+                #         frame_chunk = video_frames.get_frame_chunk(window_index)
+                #         # Adding video embedding
+                #         video_frames.add_embedding(vclip.get_feature(frame_chunk))
+                #         window_index += 1
+                #     frame_index += 1
 
                 # Saving data
                 dataset_name = "lvb"

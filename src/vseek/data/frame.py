@@ -7,6 +7,15 @@ import numpy as np
 import torch
 from pydantic import BaseModel, ConfigDict, Field
 
+# Video IO: use OpenCV for writing (encoding), Decord for reading (fast)
+import cv2
+try:
+    from decord import VideoReader as DecordVideoReader
+    from decord import cpu as decord_cpu
+    _HAS_DECORD = True
+except Exception:
+    _HAS_DECORD = False
+
 
 class SingleFrame(BaseModel):
     """Frame class."""
@@ -23,35 +32,44 @@ class VideoFrames(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    frames: list[SingleFrame] = Field(
-        default_factory=list, description="The list of frames"
+    # Store frames directly as numpy arrays (RGB)
+    all_frames: list[np.ndarray] = Field(
+        default_factory=list, description="The list of frames (RGB)"
     )
     embeddings: list[torch.Tensor] = Field(
         default_factory=list, description="The list of embeddings"
     )
-    subtitles: list[str] = Field(
+    subtitle_embeddings: list[torch.Tensor] = Field(
+        default_factory=list, description="The list of subtitle embeddings"
+    )
+    all_subtitles: list[str] = Field(
         default_factory=list, description="The list of captions"
     )
     # Frame windown operation
-    frames_by_window: dict[int, list[SingleFrame]] = Field(default_factory=dict)
+    frames_by_window: dict[int, list[np.ndarray]] = Field(default_factory=dict)
     subtitles_by_window: dict[int, list[str]] = Field(default_factory=dict)
     unique_subtitles_by_window: dict[int, str] = Field(default_factory=dict)
     window_size: Optional[int] = Field(None, description="The size of the window")
     window_index_map: dict[int, Tuple[int, int]] = Field(default_factory=dict)
-    window_index: int = 0
-
-    def add_frame(self, frame: SingleFrame) -> None:
-        self.frames.append(frame)
+    window_by_subtitle: dict[str, list[int]] = Field(default_factory=dict)
+    window_index: int = Field(0, description="The current window index counter")
+    
+    def add_all_frames(self, frames: list[np.ndarray]) -> None:
+        self.all_frames = frames
+    
+    def partition_frames(self) -> None:
         if self.window_size:
-            if len(self.frames) == self.window_size:
-                self.window_index_map[self.window_index] = self.get_window_range(
-                    self.window_index
-                )
-                self.frames_by_window[self.window_index] = self.frames
+            self.frames_by_window.clear()
+            self.window_index_map.clear()
+            self.window_index = 0
+            total = len(self.all_frames)
+            for i in range(0, total, self.window_size):
+                start_idx, end_idx = self.get_window_range(i // self.window_size)
+                self.window_index_map[i // self.window_size] = (start_idx, min(end_idx, total))
+                self.frames_by_window[i // self.window_size] = self.all_frames[start_idx:min(end_idx, total)]
                 self.window_index += 1
-                self.frames = []
 
-    def add_subtitle(self, subtitle: str) -> None:
+    def add_subtitle(self, subtitles: str) -> None:
         """Add a subtitle to the VideoFrames.
 
         You must add frames before adding subtitles.
@@ -59,24 +77,34 @@ class VideoFrames(BaseModel):
         Args:
             subtitle: The subtitle to add
         """
-        self.subtitles.append(subtitle)
-        if self.window_size:
-            if len(self.subtitles) == self.window_size:
-                window_index = self.window_index - 1
-                start_idx, end_idx = self.get_window_range(window_index)
+        self.all_subtitles = subtitles
 
-                self.subtitles_by_window[window_index] = self.subtitles
-                unique_subtitles = list(dict.fromkeys(self.subtitles))
-                self.unique_subtitles_by_window[window_index] = ".".join(
-                    unique_subtitles
-                )
-                self.subtitles = []
+    def add_all_subtitles(self, subtitles: list[str]) -> None:
+        self.all_subtitles = subtitles
+    
+    def partition_subtitles(self) -> None:
+        
+        # For each subtitle, check the start and end timestamp, add it to the corresponding window if its within the window size
+        
+        if self.window_size:
+            for i in range(0, len(self.all_subtitles), self.window_size):
+                self.subtitle_by_window[i] = sum(self.all_subtitles[i:i+self.window_size], [])
+                self.unique_subtitles_by_window[i] = list(set(self.subtitle_by_window[i]))
+                for sub in self.unique_subtitles_by_window[i]:
+                    if sub not in self.subtitle_by_frame:
+                        self.window_by_subtitle[sub] = [i]
+                    else:
+                        self.window_by_subtitle[sub].append(i)
+
 
     def add_embedding(self, embedding: torch.Tensor) -> None:
         self.embeddings.append(embedding)
+    
+    def add_subtitle_embedding(self, embedding: torch.Tensor) -> None:
+        self.subtitle_embeddings.append(embedding)
 
     def get_frame_chunk(self, window_idx: int) -> list[np.ndarray]:
-        return [frame.image for frame in self.frames_by_window[window_idx]]
+        return self.frames_by_window[window_idx]
 
     def get_window_range(self, window_idx: int) -> tuple[int, int]:
         """Get the frame range for a given window index.
@@ -88,7 +116,7 @@ class VideoFrames(BaseModel):
             Tuple of (start_idx, end_idx) for the window (both inclusive)
         """
         start_idx = window_idx * self.window_size
-        end_idx = (window_idx + 1) * self.window_size - 1
+        end_idx = (window_idx + 1) * self.window_size
         return start_idx, end_idx
 
     def save(self, filepath: str | Path, method: str = "hybrid") -> None:
@@ -114,72 +142,59 @@ class VideoFrames(BaseModel):
             raise ValueError(f"Unknown save method: {method}")
 
     def _save_hybrid(self, filepath: Path) -> None:
-        """Save using hybrid approach: JSON metadata + separate binary data."""
+        """Save using hybrid approach: JSON metadata + single MP4 at 1 FPS."""
         # Create directory structure
         base_dir = filepath.with_suffix("")
         base_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save metadata (everything except large arrays)
+        # Prepare frames video
+        video_path = base_dir / "frames.mp4"
+        fps = 1
+        if len(self.all_frames) > 0:
+            first = self.all_frames[0]
+            height, width = int(first.shape[0]), int(first.shape[1])
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            writer = cv2.VideoWriter(str(video_path), fourcc, fps, (width, height))
+            for frame in self.all_frames:
+                # Ensure uint8 and proper color for OpenCV (expects BGR)
+                frame_uint8 = frame if frame.dtype == np.uint8 else frame.astype(np.uint8)
+                if frame_uint8.ndim == 2:
+                    frame_uint8 = cv2.cvtColor(frame_uint8, cv2.COLOR_GRAY2BGR)
+                else:
+                    frame_uint8 = cv2.cvtColor(frame_uint8, cv2.COLOR_RGB2BGR)
+                writer.write(frame_uint8)
+            writer.release()
+
+        # Save metadata (no per-frame npz)
         metadata = {
             "window_size": self.window_size,
             "window_index": self.window_index,
-            "window_index_map": {
-                str(k): list(v) for k, v in self.window_index_map.items()
-            },
-            "frames_count": len(self.frames),
+            "window_index_map": {str(k): list(v) for k, v in self.window_index_map.items()},
+            "frames_count": len(self.all_frames),
             "embeddings_count": len(self.embeddings),
-            "subtitles": self.subtitles,
+            "all_subtitles": self.all_subtitles,
             "subtitles_by_window": {
-                str(k): v for k, v in self.subtitles_by_window.items()
+                k: v for k, v in self.subtitles_by_window.items()
             },
             "unique_subtitles_by_window": {
-                str(k): v for k, v in self.unique_subtitles_by_window.items()
+                k: v for k, v in self.unique_subtitles_by_window.items()
             },
+            "window_by_subtitle": {
+                k: v for k, v in self.window_by_subtitle.items()
+            },
+            "video_file": "frames.mp4",
+            "fps": fps, 
+            
         }
 
-        # Save frame metadata and images separately
-        frames_dir = base_dir / "frames"
-        frames_dir.mkdir(exist_ok=True)
-        frames_metadata = []
-
-        for i, frame in enumerate(self.frames):
-            frame_meta = {
-                "frame_idx": frame.frame_idx,
-                "real_video_index": frame.real_video_index,
-                "image_file": f"frame_{i}.npz",
-            }
-            frames_metadata.append(frame_meta)
-            # Save image as compressed numpy array
-            np.savez_compressed(frames_dir / f"frame_{i}.npz", image=frame.image)
-
-        # Save windowed frames
-        frames_by_window_meta = {}
-        for window_idx, window_frames in self.frames_by_window.items():
-            window_dir = frames_dir / f"window_{window_idx}"
-            window_dir.mkdir(exist_ok=True)
-            window_frames_meta = []
-
-            for i, frame in enumerate(window_frames):
-                frame_meta = {
-                    "frame_idx": frame.frame_idx,
-                    "real_video_index": frame.real_video_index,
-                    "image_file": f"frame_{i}.npz",
-                }
-                window_frames_meta.append(frame_meta)
-                np.savez_compressed(window_dir / f"frame_{i}.npz", image=frame.image)
-
-            frames_by_window_meta[str(window_idx)] = window_frames_meta
-
-        metadata["frames"] = frames_metadata
-        metadata["frames_by_window"] = frames_by_window_meta
-
-        # Save metadata as JSON
         with open(base_dir / "metadata.json", "w") as f:
             json.dump(metadata, f, indent=2)
 
         # Save embeddings using PyTorch
         if self.embeddings:
             torch.save(self.embeddings, base_dir / "embeddings.pt")
+        if self.subtitle_embeddings:
+            torch.save(self.subtitle_embeddings, base_dir / "subtitle_embeddings.pt")
 
     def _save_pickle(self, filepath: Path) -> None:
         """Save using pickle (simple but less portable)."""
@@ -214,7 +229,7 @@ class VideoFrames(BaseModel):
 
     @classmethod
     def _load_hybrid(cls, filepath: Path) -> "VideoFrames":
-        """Load from hybrid format."""
+        """Load from hybrid format (read MP4 with Decord at 1 FPS)."""
         base_dir = filepath.with_suffix("")
 
         # Load metadata
@@ -223,54 +238,55 @@ class VideoFrames(BaseModel):
 
         # Create VideoFrames instance
         video_frames = cls(
-            window_size=metadata["window_size"],
-            window_index=metadata["window_index"],
+            window_size=metadata.get("window_size"),
+            window_index=metadata.get("window_index", 0),
             window_index_map={
-                int(k): tuple(v) for k, v in metadata["window_index_map"].items()
+                int(k): tuple(v) for k, v in metadata.get("window_index_map", {}).items()
             },
+            window_by_subtitle={
+                str(k): v for k, v in metadata.get("window_by_subtitle", {}).items()
+            },
+            subtitles_by_window={
+                str(k): v for k, v in metadata.get("subtitles_by_window", {}).items()
+            },
+            unique_subtitles_by_window={
+                str(k): v for k, v in metadata.get("unique_subtitles_by_window", {}).items()
+            },
+            all_subtitles=metadata.get("all_subtitles", []),
         )
 
-        # Restore subtitle fields
-        video_frames.subtitles = metadata.get("subtitles", [])
-        video_frames.subtitles_by_window = {
-            int(k): v for k, v in metadata.get("subtitles_by_window", {}).items()
-        }
-        video_frames.unique_subtitles_by_window = {
-            int(k): v for k, v in metadata.get("unique_subtitles_by_window", {}).items()
-        }
+        # Read frames video
+        video_file = metadata.get("video_file", "frames.mp4")
+        video_path = base_dir / video_file
+        frames: list[np.ndarray] = []
+        if _HAS_DECORD and video_path.exists():
+            vr = DecordVideoReader(str(video_path), ctx=decord_cpu(0))
+            for idx in range(len(vr)):
+                frame_nd = vr[idx]
+                frame_img = frame_nd.asnumpy() if hasattr(frame_nd, "asnumpy") else np.asarray(frame_nd)
+                frames.append(frame_img)
+        else:
+            # Fallback to OpenCV if decord unavailable
+            cap = cv2.VideoCapture(str(video_path))
+            while True:
+                ret, frame_bgr = cap.read()
+                if not ret:
+                    break
+                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                frames.append(frame_rgb)
+            cap.release()
 
-        # Load frames
-        frames_dir = base_dir / "frames"
-        for frame_meta in metadata["frames"]:
-            image_data = np.load(frames_dir / frame_meta["image_file"])
-            frame = SingleFrame(
-                frame_idx=frame_meta["frame_idx"],
-                real_video_index=frame_meta["real_video_index"],
-                image=image_data["image"],
-            )
-            video_frames.frames.append(frame)
-
-        # Load windowed frames
-        for window_idx_str, window_frames_meta in metadata["frames_by_window"].items():
-            window_idx = int(window_idx_str)
-            window_frames = []
-            window_dir = frames_dir / f"window_{window_idx}"
-
-            for frame_meta in window_frames_meta:
-                image_data = np.load(window_dir / frame_meta["image_file"])
-                frame = SingleFrame(
-                    frame_idx=frame_meta["frame_idx"],
-                    real_video_index=frame_meta["real_video_index"],
-                    image=image_data["image"],
-                )
-                window_frames.append(frame)
-
-            video_frames.frames_by_window[window_idx] = window_frames
+        video_frames.all_frames = frames
+        video_frames.partition_frames()
 
         # Load embeddings
         embeddings_file = base_dir / "embeddings.pt"
         if embeddings_file.exists():
             video_frames.embeddings = torch.load(embeddings_file)
+        
+        subtitle_embeddings_file = base_dir / "subtitle_embeddings.pt"
+        if subtitle_embeddings_file.exists():
+            video_frames.subtitle_embeddings = torch.load(subtitle_embeddings_file)
 
         return video_frames
 
