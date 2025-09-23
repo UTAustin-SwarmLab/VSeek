@@ -58,6 +58,7 @@ class VideoSearchServer:
         
         # Initialize video data storage
         self.video_embeddings = {}
+        self.video_subtitle_embeddings = {}
         self.video_subtitles = {}
         
         self.init_index()
@@ -83,7 +84,8 @@ class VideoSearchServer:
             try:
                 video_frames = VideoFrames.load(str(pkl_path))
                 self.video_embeddings[video_id] = video_frames.embeddings
-                self.video_subtitles[video_id] = video_frames.subtitles
+                self.video_subtitles[video_id] = video_frames.window_by_subtitle
+                self.video_subtitle_embeddings[video_id] = video_frames.subtitle_embeddings
                 logger.debug(f"Loaded video {video_id} with {len(video_frames.embeddings)} embeddings")
                 total_success += 1
             except Exception as e:
@@ -230,19 +232,19 @@ class VideoSearchServer:
                 return jsonify({"error": "No subtitles available"}), 404
 
             # Get text embeddings for all subtitles
-            subtitle_embeddings = []
+            subtitle_embeddings = self.video_subtitle_embeddings[video_id]
             logger.debug(f"Processing {len(subtitles)} subtitles")
-            
-            for subtitle in subtitles:
-                emb = self.retriever.get_text_embedding(subtitle)
+            subtitle_embeddings_norm = []
+            for emb in subtitle_embeddings:
                 emb_device = emb.to(device)  # Move to same device as query embedding
                 # Ensure embedding is 1D
                 if emb_device.dim() > 1:
                     emb_device = emb_device.squeeze()
                 emb_norm = emb_device / emb_device.norm(dim=-1, keepdim=True)
-                subtitle_embeddings.append(emb_norm)
+                subtitle_embeddings_norm.append(emb_norm)
+                
 
-            subtitle_embeddings_tensor = torch.stack(subtitle_embeddings)  # Shape: [N, embedding_dim]
+            subtitle_embeddings_tensor = torch.stack(subtitle_embeddings_norm)  # Shape: [N, embedding_dim]
 
             # Compute cosine similarities on GPU
             # subtitle_embeddings_tensor: [N, D], text_embedding: [D] -> similarities: [N]
@@ -250,13 +252,21 @@ class VideoSearchServer:
 
             # Get indices sorted by similarity (descending order)
             sorted_indices = torch.argsort(similarities, descending=True)
+            
+            total_windows_retrieved = 0
+            windows_retrieved = []
+            for index in sorted_indices:
+                closest_subtitle = subtitles[sorted_indices[0]]
+                windows_retrieved.append(self.video_subtitles[video_id][closest_subtitle])
+                total_windows_retrieved += len(self.video_subtitles[video_id][closest_subtitle])
+                if total_windows_retrieved >= topk:
+                    break
 
             # Return top-k results
-            subtitle_indices = sorted_indices.cpu().tolist()[:topk]
             
             response_data = {
                 "query": query,
-                "subtitle_indices": subtitle_indices,
+                "subtitle_indices": total_windows_retrieved,
                 "topk": topk,
                 "video_id": video_id,
                 "total_subtitles": len(subtitles),
