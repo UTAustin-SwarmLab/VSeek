@@ -5,15 +5,18 @@
 MODEL="Qwen/Qwen2.5-VL-7B-Instruct"
 export CUDA_DEVICE_ORDER="PCI_BUS_ID"
 export NCCL_P2P_DISABLE=1
-export CUDA_VISIBLE_DEVICES="4"
+
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-PORT=8003
+PORT=${1:-8002}
+CUDA_VISIBLE_DEVICES=${2:-4}
+
+export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}
 vllm serve $MODEL \
     --tensor-parallel-size 1 \
     --port $PORT \
     --trust-remote-code
-
+    
 # Optional parameters (uncomment as needed):
 # --limit-mm-per-prompt image=3
 # --gpu-memory-utilization 0.85
