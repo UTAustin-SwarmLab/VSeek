@@ -10,13 +10,12 @@ from tqdm import tqdm
 
 from vseek.data.frame import SingleFrame, VideoFrames
 from data.manager import Manager
-from vseek.setting import DataSetting, ViClipSetting
+from omegaconf import DictConfig
 from vseek.video.read_video import read_video
 from vseek.video_embedding.video_clip import ViClip
 import traceback
-VICLIP_SETTING = ViClipSetting()
+import torch
 
-DATA_SETTING = DataSetting()
 
 import re
 
@@ -113,9 +112,11 @@ def process_subtitles(subtitles: list[dict],
     return all_subtitles
     
 class LongVideoBench(Manager):
-    def __init__(self):
-        self._dataset_path = "/nas/mars/dataset/longvideobench/LongVideoBench/"
-        self._burned_path = "/nas/mars/dataset/longvideobench/"
+    def __init__(self, cfg: DictConfig | None = None):
+        
+        self.cfg = cfg
+        self._dataset_path = cfg.dataset.dataset_path 
+        self._burned_path = cfg.dataset.burned_path 
         self._nsvs_path = (
             "/nas/mars/experiment_result/nsvqa/5_full_output/longvideobench_output.json"
         )
@@ -210,7 +211,8 @@ class LongVideoBench(Manager):
     def save_it_as_vseek_data(self, desired_interval_in_sec: int = 1):
         try:
             data = self.load_data()
-            window_size = DATA_SETTING.window_size
+            # Prefer Hydra cfg for window_size and output_dir
+            window_size = self.cfg.retriever.window_size
 
             # Allow overriding workers via env; keep conservative default for GPU workloads
             default_workers = min(4, (os.cpu_count() or 4))
@@ -246,14 +248,15 @@ class LongVideoBench(Manager):
                         processed_ids.add(unique_id)
                     subtitles = json.load(open(entry["paths"]["subtitle_path"], "r"))
                     video = read_video(video_path=entry["paths"]["video_path"])
+                    # Initialize retriever model from Hydra cfg
                     vclip = ViClip(
-                        pretrained_model_path=VICLIP_SETTING.vclip_model_path,
-                        gpu_number=VICLIP_SETTING.gpu_number,
+                        pretrained_model_path=self.cfg.retriever.retrieval_model_path ,
+                        gpu_number=self.cfg.retriever.gpu_number,
                     )
                     frame_index = 0
                     window_index = 0
                     subtitle_index = 0
-                    video_frames = VideoFrames(window_size=DATA_SETTING.window_size)
+                    video_frames = VideoFrames(window_size=window_size)
 
                     all_frames = video.get_all_frames_of_video(desired_interval_in_sec=desired_interval_in_sec)
                     video_frames.add_all_frames(all_frames)
@@ -282,22 +285,22 @@ class LongVideoBench(Manager):
                     video_frames.partition_subtitles()
                     print(f"Added {len(all_subtitles)} subtitles")
 
-                    all_unique_subtitles = video_frames.window_by_subtitle.keys()
-
+                    all_unique_subtitles = list(video_frames.window_by_subtitle.keys())
+                    print(all_unique_subtitles)
                     for window_idx in video_frames.frames_by_window.keys():
                         frame_chunk = video_frames.get_frame_chunk(window_idx)
-                        video_frames.add_embedding(vclip.get_feature(frame_chunk))
-
+                        video_frames.add_embedding(window_idx, vclip.get_feature(frame_chunk))
+    
                     for subtitle in all_unique_subtitles:
-                        video_frames.add_subtitle_embedding(vclip.get_text_embedding(subtitle))
+                        print(f"Adding subtitle embedding {subtitle}")
+                        video_frames.add_subtitle_embedding(subtitle, vclip.get_text_embedding(subtitle))
 
                     # Saving data
                     dataset_name = "lvb"
                     dir_name = f"{dataset_name}_window_{window_size}"
                     file_name = f"{unique_id}.pkl"
-                    output_path = Path(DATA_SETTING.output_dir).joinpath(
-                        dir_name, file_name
-                    )
+                    output_dir = self.cfg.retriever.index_path
+                    output_path = Path(output_dir).joinpath(dir_name, file_name)
                     video_frames.save(str(output_path))
                 except Exception as e:
                     print(f"Error processing entry {entry.get('metadata', {}).get('video_id', 'unknown')}: {e}")
@@ -308,11 +311,58 @@ class LongVideoBench(Manager):
         except Exception as e:
             print(f"Error saving data: {e}")
             print(traceback.format_exc())
+            
+            
+    def fix_subtitle_embeddings(self):
+        dataset_name = "lvb"
+        window_size = self.cfg.retriever.window_size 
+        dir_name = f"{dataset_name}_window_{window_size}"
+        output_dir = self.cfg.retriever.index_path
+        data_path = os.path.join(output_dir, dir_name)
+        data = self.load_data()
+        default_workers = min(4, (os.cpu_count() or 4))
+        max_workers = int(os.getenv("VSEEK_WORKERS", default_workers))
+        unique_entries: list[dict] = []
+        seen_ids: set[str] = set()
+            
+        for e in data:
+            vid = e.get("metadata", {}).get("video_id")
+            if not vid or vid in seen_ids:
+                continue
+            seen_ids.add(vid)
+            unique_entries.append(e)
+            
+            
+        def _process_single_entry(entry: dict):
+            unique_id = entry["metadata"]["video_id"]
+            
+            pkl_path = os.path.join(data_path, unique_id, "subtitle_embeddings.pt")
+            if not os.path.exists(pkl_path):
+                return
+            subtitle_embeddings = torch.load(pkl_path)
+            vclip = ViClip(
+                pretrained_model_path=self.cfg.retriever.retrieval_model_path ,
+                gpu_number=self.cfg.retriever.gpu_number
+            )
+            for subtitle, embedding in subtitle_embeddings.items():
+                embedding2 = vclip.get_text_embedding(subtitle)
+                embedding2 = embedding2/embedding2.norm(dim=-1, keepdim=True)
+                embedding = embedding.to(embedding2.device)
+                embedding = embedding/embedding.norm(dim=-1, keepdim=True)
+                subtitle_embeddings[subtitle] = embedding2
+                
+            torch.save(subtitle_embeddings, pkl_path)
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            list(tqdm(executor.map(_process_single_entry, unique_entries), total=len(unique_entries)))
+
+                
 
     def is_file_exists(self, window_size: str, unique_id: str):
         dataset_name = "lvb"
         dir_name = f"{dataset_name}_window_{window_size}"
-        data_path = Path(DATA_SETTING.output_dir).joinpath(dir_name)
+        output_dir = self.cfg.retriever.index_path
+        data_path = Path(output_dir).joinpath(dir_name)
         if not data_path.exists():
             return False
         files = [dir_path.stem for dir_path in data_path.iterdir()]
