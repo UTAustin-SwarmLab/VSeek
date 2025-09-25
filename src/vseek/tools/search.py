@@ -83,15 +83,11 @@ class VideoSearchTool(BaseTool):
         self._instance_dict = {}
 
         # Background server configuration
-        self.server_url = config.get("server_url", "http://localhost:8000")
+        self.server_url = config.get("server_url", "http://localhost:9000")
         self.timeout = config.get("timeout", 30)
         self.topk = config.get("topk", 5)
         
         # ViClip model for text embeddings
-        self.viclip = ViClip(
-            pretrained_model_path=VICLIP_SETTING.vclip_model_path,
-            gpu_number=VICLIP_SETTING.gpu_number,
-        )
 
         logger.info(f"Initialized VideoSearchTool with config: {config}")
 
