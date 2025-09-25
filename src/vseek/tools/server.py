@@ -13,7 +13,7 @@ from omegaconf import DictConfig
 from vseek.video_embedding.video_clip import ViClip
 from data.lvb import LongVideoBench
 from vseek.data.frame import VideoFrames
-
+import traceback
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ class VideoSearchServer:
         
         # Initialize dataset
         if self.dataset_name == "lvb":
-            dataset = LongVideoBench()
+            dataset = LongVideoBench(args)
             self.entries = dataset.load_data()
         else:
             raise ValueError(f"Unsupported dataset: {self.dataset_name}")
@@ -73,24 +73,25 @@ class VideoSearchServer:
         total_success = 0
         for entry in tqdm(self.entries, desc="Processing LVB entries"):
             video_id = entry["metadata"]["video_id"]
-            pkl_path = data_root.joinpath(f"{video_id}")
-            
-            if not pkl_path.exists():
-                # Skip if the preprocessed frames are not available
-                # You can generate them via LongVideoBench.save_it_as_vseek_data()
-                logger.warning(f"Missing preprocessed frames: {pkl_path}")
-                continue
+            if video_id not in self.video_embeddings or video_id not in self.video_subtitles or video_id not in self.video_subtitle_embeddings:
+                pkl_path = data_root.joinpath(f"{video_id}")
 
-            try:
-                video_frames = VideoFrames.load(str(pkl_path))
-                self.video_embeddings[video_id] = video_frames.embeddings
-                self.video_subtitles[video_id] = video_frames.window_by_subtitle
-                self.video_subtitle_embeddings[video_id] = video_frames.subtitle_embeddings
-                logger.debug(f"Loaded video {video_id} with {len(video_frames.embeddings)} embeddings")
-                total_success += 1
-            except Exception as e:
-                logger.error(f"Failed to load video {video_id}: {e}")
-                continue
+                if not pkl_path.exists():
+                    # Skip if the preprocessed frames are not available
+                    # You can generate them via LongVideoBench.save_it_as_vseek_data()
+                    logger.warning(f"Missing preprocessed frames: {pkl_path}")
+                    continue
+
+                try:
+                    video_frames = VideoFrames.load(str(pkl_path))
+                    self.video_embeddings[video_id] = video_frames.embeddings
+                    self.video_subtitles[video_id] = video_frames.window_by_subtitle
+                    self.video_subtitle_embeddings[video_id] = video_frames.subtitle_embeddings
+                    logger.debug(f"Loaded video {video_id} with {len(video_frames.embeddings)} embeddings")
+                    total_success += 1
+                except Exception as e:
+                    logger.error(f"Failed to load video {video_id}: {e}")
+                    continue
         logger.info(f"Loaded {total_success} videos")
         logger.info(f"Loaded {len(self.video_embeddings)} videos")
 
@@ -143,14 +144,16 @@ class VideoSearchServer:
             # Stack all visual embeddings into a single tensor
             # Move to same device as text embedding and normalize
             visual_embeddings = []
-            for emb in embeddings:
+            visual_embeddings_keys = []
+            for key, emb in embeddings.items():
                 emb_device = emb.to(device)  # Move to same device as text embedding
                 # Ensure embedding is 1D
                 if emb_device.dim() > 1:
                     emb_device = emb_device.squeeze()
                 emb_norm = emb_device / emb_device.norm(dim=-1, keepdim=True)
                 visual_embeddings.append(emb_norm)
-
+                visual_embeddings_keys.append(key)
+                
             visual_embeddings_tensor = torch.stack(visual_embeddings)  # Shape: [N, embedding_dim]
 
             # Compute cosine similarities on GPU
@@ -163,11 +166,12 @@ class VideoSearchServer:
 
             # Return top-k results
             frame_indices = sorted_indices.cpu().tolist()[:topk]
+            window_indices = [visual_embeddings_keys[i] for i in frame_indices]
             # Return frame indices in ascending order
             
             response_data = {
                 "query": query,
-                "frame_indices": frame_indices,
+                "frame_indices": window_indices,
                 "topk": topk,
                 "video_id": video_id,
                 "total_embeddings": len(embeddings),
@@ -220,7 +224,7 @@ class VideoSearchServer:
             # Get subtitles for the specified video or all videos
             if video_id:
                 if video_id not in self.video_subtitles:
-                    return jsonify({"error": f"Video {video_id} not found"}), 404
+                    return jsonify({"error": f"Video {video_id} not found for subtitles"}), 404
                 subtitles = self.video_subtitles[video_id]
             else:
                 # Search across all videos - concatenate all subtitles
@@ -235,14 +239,24 @@ class VideoSearchServer:
             subtitle_embeddings = self.video_subtitle_embeddings[video_id]
             logger.debug(f"Processing {len(subtitles)} subtitles")
             subtitle_embeddings_norm = []
-            for emb in subtitle_embeddings:
+            subtitle_embeddings_keys = []
+            
+            
+            for subtitle,emb in subtitle_embeddings.items():
                 emb_device = emb.to(device)  # Move to same device as query embedding
                 # Ensure embedding is 1D
                 if emb_device.dim() > 1:
                     emb_device = emb_device.squeeze()
-                emb_norm = emb_device / emb_device.norm(dim=-1, keepdim=True)
+                emb_norm = emb_device / emb_device.norm(dim=-1, keepdim=True).clamp(min=1e-8)
                 subtitle_embeddings_norm.append(emb_norm)
-                
+                subtitle_embeddings_keys.append(subtitle)
+            # for sub in subtitle_list:
+            #     emb_device = self.retriever.get_text_embedding(sub).to(device)
+            #     # Ensure embedding is 1D
+            #     if emb_device.dim() > 1:
+            #         emb_device = emb_device.squeeze()
+            #     emb_norm = emb_device / emb_device.norm(dim=-1, keepdim=True)
+            #     subtitle_embeddings_norm.append(emb_norm)
 
             subtitle_embeddings_tensor = torch.stack(subtitle_embeddings_norm)  # Shape: [N, embedding_dim]
 
@@ -251,25 +265,33 @@ class VideoSearchServer:
             similarities = torch.matmul(subtitle_embeddings_tensor, text_embedding)
 
             # Get indices sorted by similarity (descending order)
+            print(f"similarities: {similarities}")
+            print(f"sorted similarities: {torch.sort(similarities, descending=True)}")
             sorted_indices = torch.argsort(similarities, descending=True)
-            
+            print(f"sorted indices: {sorted_indices}")
+            sorted_indices = sorted_indices.cpu().tolist()
             total_windows_retrieved = 0
             windows_retrieved = []
+
+            closest_subtitles = []
             for index in sorted_indices:
-                closest_subtitle = subtitles[sorted_indices[0]]
+                closest_subtitle = subtitle_embeddings_keys[index]
+                closest_subtitles.append(closest_subtitle)
                 windows_retrieved.append(self.video_subtitles[video_id][closest_subtitle])
                 total_windows_retrieved += len(self.video_subtitles[video_id][closest_subtitle])
                 if total_windows_retrieved >= topk:
                     break
+            windows_retrieved = [a for b in windows_retrieved for a in b]
 
             # Return top-k results
             
             response_data = {
                 "query": query,
-                "subtitle_indices": total_windows_retrieved,
+                "subtitle_indices": windows_retrieved,
                 "topk": topk,
                 "video_id": video_id,
                 "total_subtitles": len(subtitles),
+                "closest_subtitles": closest_subtitles,
                 "metadata": {
                     "search_type": "subtitles",
                     "status": "success"
@@ -280,6 +302,7 @@ class VideoSearchServer:
 
         except Exception as e:
             logger.error(f"Subtitle search failed: {str(e)}")
+            print(traceback.format_exc())
             return jsonify({"error": f"Subtitle search failed: {str(e)}"}), 500
 
 
