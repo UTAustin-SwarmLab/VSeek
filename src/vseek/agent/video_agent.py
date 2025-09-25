@@ -1,38 +1,29 @@
 import torch
+import requests
 
 from vseek.agent.utils.parse_response import parse_response_with_regex
 from vseek.data.exp_io import DataInput
 from vseek.data.vseek_dm import ReasoningTrajectory
-from vseek.setting import ViClipSetting, VLLMSetting
-from vseek.video_embedding.video_clip import ViClip
 from vseek.vlm.vllm_client import VLLMClient
-
-VLLM_SETTING = VLLMSetting()
-VICLIP_SETTING = ViClipSetting()
 
 
 class VSeekAgent(VLLMClient):
     def __init__(
         self,
-        api_key='EMPTY',
-        api_base=None,
-        model=None,
-        max_image_width=256,
-        max_image_height=256,
-        image_quality=85,
-        topk=1,
-        temperature=0.5,
+        config
     ):
-        super().__init__(api_key=api_key, api_base=api_base, model=model)
-        self.viclip = ViClip(
-            pretrained_model_path=VICLIP_SETTING.vclip_model_path,
-            gpu_number=VICLIP_SETTING.gpu_number,
-        )
-        self.max_image_width = max_image_width
-        self.max_image_height = max_image_height
-        self.image_quality = image_quality
-        self.topk = topk
-        self.temperature = temperature
+        super().__init__(api_key=config.llm.openai_api_key, api_base=config.llm.server_url, model=config.llm.model)
+
+        self.max_image_width = config.inference.max_image_width
+        self.max_image_height = config.inference.max_image_height
+        self.image_quality = config.inference.image_quality
+        self.topk = config.inference.topk
+        self.temperature = config.inference.temperature
+        self.server_url = config.llm.server_url
+        self.model = config.llm.model
+        self.openai_api_key = config.llm.openai_api_key
+
+        self.retriever_server_url = config.retriever.server_url
         # Tradeoff between topk and number of effective frames from each window
 
     def _encode_frame(self, frame):
@@ -245,13 +236,11 @@ class VSeekAgent(VLLMClient):
                         answer=agent_output.answer,
                     )
                 elif agent_output.search or agent_output.subtitle:
-                    # search
-                    
+                    # search via retriever server
                     if agent_output.search:
-                        embeddings = video_frames.embeddings
-                        search_indices = self.search_video(embeddings, agent_output.search)
+                        search_indices = self.search_video(agent_output.search, getattr(data_input, "video_id", None), self.topk)
                     elif agent_output.subtitle:
-                        search_indices = self.search_subtitle(video_frames.subtitles, agent_output.subtitle)
+                        search_indices = self.search_subtitle(agent_output.subtitle, getattr(data_input, "video_id", None), self.topk)
                     print("Search indices: ", search_indices)
                     # Use the most relevant video segment for next iteration
                     if search_indices:
@@ -264,97 +253,31 @@ class VSeekAgent(VLLMClient):
                             is_found_answer=False,
                         )
 
-    def search_video(
-        self, embeddings: list[torch.Tensor], search_query: str
-    ) -> list[int]:
-        """Search for the most similar visual embeddings to the text query.
+    def search_video(self, search_query: str, video_id: str | None = None, topk: int | None = None) -> list[int]:
+        params = {"query": search_query}
+        if topk is not None:
+            params["topk"] = topk
+        if video_id:
+            params["video_id"] = video_id
+        try:
+            resp = requests.get(f"{self.retriever_server_url}/search", params=params, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            return [int(i) for i in data.get("frame_indices", [])]
+        except Exception:
+            return []
 
-        Args:
-            embeddings: List of visual embeddings (tensors)
-            search_query: Text query to search for
-
-        Returns:
-            List of indices sorted by similarity (highest first)
-        """
-        # Get text embedding for the search query
-        text_embedding = self.viclip.get_text_embedding(search_query)
-
-        # Get the device of the text embedding (likely GPU)
-        device = text_embedding.device
-
-        # Ensure text embedding is 1D [embedding_dim]
-        if text_embedding.dim() > 1:
-            text_embedding = text_embedding.squeeze()
-
-        # Stack all visual embeddings into a single tensor
-        # Move to same device as text embedding and normalize
-        visual_embeddings = []
-        for emb in embeddings:
-            emb_device = emb.to(device)  # Move to same device as text embedding
-            # Ensure embedding is 1D
-            if emb_device.dim() > 1:
-                emb_device = emb_device.squeeze()
-            emb_norm = emb_device / emb_device.norm(dim=-1, keepdim=True)
-            visual_embeddings.append(emb_norm)
-
-        visual_embeddings_tensor = torch.stack(
-            visual_embeddings
-        )  # Shape: [N, embedding_dim]
-
-        # Compute cosine similarities on GPU
-        # text_embedding is already normalized from get_text_embedding
-        # visual_embeddings_tensor: [N, D], text_embedding: [D] -> similarities: [N]
-        similarities = torch.matmul(visual_embeddings_tensor, text_embedding)
-
-        # Get indices sorted by similarity (descending order)
-        sorted_indices = torch.argsort(similarities, descending=True)
-
-        return sorted_indices.cpu().tolist()
-
-    def search_subtitle(self, subtitles: list[str], search_query: str) -> list[int]:
-        """Search for the most similar subtitle to the text query.
-
-        Args:
-            subtitles: List of subtitles (list of strings)
-            search_query: Text query to search for
-
-        Returns:
-            List of indices sorted by similarity (highest first)
-        """
-        # Get text embedding for the search query
-        text_embedding = self.viclip.get_text_embedding(search_query)
-
-        # Get the device of the text embedding (likely GPU)
-        device = text_embedding.device
-
-        # Ensure text embedding is 1D [embedding_dim]
-        if text_embedding.dim() > 1:
-            text_embedding = text_embedding.squeeze()
-
-        # Normalize the text embedding
-        text_embedding = text_embedding / text_embedding.norm(dim=-1, keepdim=True)
-
-        # Get text embeddings for all subtitles
-        subtitle_embeddings = []
-        print("len(subtitles): ", len(subtitles))
-        for subtitle in subtitles:
-            emb = self.viclip.get_text_embedding(subtitle)
-            emb_device = emb.to(device)  # Move to same device as query embedding
-            # Ensure embedding is 1D
-            if emb_device.dim() > 1:
-                emb_device = emb_device.squeeze()
-            emb_norm = emb_device / emb_device.norm(dim=-1, keepdim=True)
-            subtitle_embeddings.append(emb_norm)
-
-        subtitle_embeddings_tensor = torch.stack(
-            subtitle_embeddings
-        )  # Shape: [N, embedding_dim]
-
-        # Compute cosine similarities on GPU
-        # subtitle_embeddings_tensor: [N, D], text_embedding: [D] -> similarities: [N]
-        similarities = torch.matmul(subtitle_embeddings_tensor, text_embedding)
-
-        # Get indices sorted by similarity (descending order)
-        sorted_indices = torch.argsort(similarities, descending=True)
-
-        return sorted_indices.cpu().tolist()
+    def search_subtitle(self, search_query: str, video_id: str | None = None, topk: int | None = None) -> list[int]:
+        params = {"query": search_query}
+        if topk is not None:
+            params["topk"] = topk
+        if video_id:
+            params["video_id"] = video_id
+        try:
+            resp = requests.get(f"{self.retriever_server_url}/search_subtitle", params=params, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            indices =  data.get("subtitle_indices")
+            return [int(i) for i in indices]
+        except Exception:
+            return []
