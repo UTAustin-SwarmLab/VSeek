@@ -6,14 +6,12 @@ import os
 from tqdm import tqdm
 from vseek.data.exp_io import DataInput
 from vseek.data.frame import VideoFrames
-from vseek.setting import DataSetting, VLLMSetting
 from vseek.agent.video_agent import VSeekAgent
 
 # LongVideoBench dataset helper
 from data.lvb import LongVideoBench
-
-VLLM_SETTING = VLLMSetting()
-DATA_SETTING = DataSetting()
+import hydra
+from omegaconf import DictConfig
 
 OUTPUT_DIR = "output"
 
@@ -53,20 +51,21 @@ def calculate_accuracy(results: list[dict]) -> float:
 
 
 
-if __name__ == "__main__":
+@hydra.main(version_base=None, config_path="../src/vseek/config/retriever", config_name="config")
+def main(cfg: DictConfig):
     # Setup logging
     # json_log_path, detailed_log_path = setup_logging()
     print(f"Logging results to:")
     # print(f"  JSON: {json_log_path}")
     # print(f"  Detailed: {detailed_log_path}")
     
-    lvb = LongVideoBench()
+    lvb = LongVideoBench(cfg)
     entries = lvb.load_data()
 
-    window_size = DATA_SETTING.window_size
+    window_size = cfg.retriever.window_size
     dataset_name = "lvb"
     dir_name = f"{dataset_name}_window_{window_size}"
-    data_root = Path(DATA_SETTING.output_dir).joinpath(dir_name)
+    data_root = Path(cfg.retriever.index_path).joinpath(dir_name)
 
     results = []
 
@@ -94,16 +93,12 @@ if __name__ == "__main__":
             question=question,
             options=options_str,
             answer=str(correct_choice),
+            video_id=video_id,
         )
 
         vlm_client = VSeekAgent(
-            api_key=VLLM_SETTING.openai_api_key,
-            api_base=VLLM_SETTING.api_base,
-            model=VLLM_SETTING.model,
-            max_image_width=384,
-            max_image_height=384,
-            image_quality=90,
-            temperature=1.0,
+            config=cfg,
+
         )
 
         trajectory = vlm_client.run(data_input)
@@ -132,3 +127,7 @@ if __name__ == "__main__":
     # print(f"\nResults logged to:")
     # print(f"  JSON: {json_log_path}")
     # print(f"  Detailed: {detailed_log_path}")
+
+
+if __name__ == "__main__":
+    main()

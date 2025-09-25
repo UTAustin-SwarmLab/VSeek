@@ -3,14 +3,12 @@ from pathlib import Path
 from tqdm import tqdm
 from vseek.data.exp_io import DataInput
 from vseek.data.frame import VideoFrames
-from vseek.setting import DataSetting, VLLMSetting
 from vseek.agent.video_rag_agent import VideoRAGAgent
 
 # LongVideoBench dataset helper
 from data.lvb import LongVideoBench
-
-VLLM_SETTING = VLLMSetting()
-DATA_SETTING = DataSetting()
+import hydra
+from omegaconf import DictConfig
 
 OUTPUT_DIR = "output"
 
@@ -47,14 +45,15 @@ def calculate_accuracy(results: list[dict]) -> float:
     return correct / len(results)
 
 
-if __name__ == "__main__":
-    lvb = LongVideoBench()
+@hydra.main(version_base=None, config_path="../src/vseek/config/retriever", config_name="config")
+def main(cfg: DictConfig):
+    lvb = LongVideoBench(cfg)
     entries = lvb.load_data()
 
-    window_size = DATA_SETTING.window_size
+    window_size = cfg.retriever.window_size
     dataset_name = "lvb"
     dir_name = f"{dataset_name}_window_{window_size}"
-    data_root = Path(DATA_SETTING.output_dir).joinpath(dir_name)
+    data_root = Path(cfg.retriever.index_path).joinpath(dir_name)
 
     results = []
 
@@ -82,16 +81,10 @@ if __name__ == "__main__":
             question=question,
             options=options_str,
             answer=str(correct_choice),
+            video_id=video_id,
         )
-        VLLM_SETTING.model = "Qwen/Qwen2.5-VL-7B-Instruct"
-        VLLM_SETTING.api_base = "http://localhost:8003/v1"
         vlm_client = VideoRAGAgent(
-            api_key=VLLM_SETTING.openai_api_key,
-            api_base=VLLM_SETTING.api_base,
-            model=VLLM_SETTING.model,
-            max_image_width=384,
-            max_image_height=384,
-            image_quality=90,
+            config=cfg,
         )
 
         trajectory = vlm_client.run(data_input)
@@ -110,3 +103,7 @@ if __name__ == "__main__":
     accuracy = calculate_accuracy(results)
     print(f"\nFinished. Total evaluated: {len(results)}")
     print(f"Accuracy: {accuracy:.3f} ({sum(1 for r in results if r['parsed_pred'] == r['gt'])}/{len(results)})")
+
+
+if __name__ == "__main__":
+    main()
