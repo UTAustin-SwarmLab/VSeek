@@ -8,3 +8,4 @@ class DataInput(BaseModel):
     question: str
     answer: str
     options: str
+    video_id: str | None = None

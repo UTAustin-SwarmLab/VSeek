@@ -16,6 +16,7 @@ try:
 except Exception:
     _HAS_DECORD = False
 
+import os
 
 def flatten(xss):
     return [x for xs in xss for x in xs]
@@ -39,13 +40,13 @@ class VideoFrames(BaseModel):
     all_frames: list[np.ndarray] = Field(
         default_factory=list, description="The list of frames (RGB)"
     )
-    embeddings: list[torch.Tensor] = Field(
-        default_factory=list, description="The list of embeddings"
+    embeddings: dict[int, torch.Tensor] = Field(
+        default_factory=dict, description="Window-indexed visual embeddings"
     )
-    subtitle_embeddings: list[torch.Tensor] = Field(
-        default_factory=list, description="The list of subtitle embeddings"
+    subtitle_embeddings: dict[str, torch.Tensor] = Field(
+        default_factory=dict, description="Subtitle-text keyed embeddings"
     )
-    all_subtitles: list[str] = Field(
+    all_subtitles: list[list[str]] = Field(
         default_factory=list, description="The list of captions"
     )
     # Frame windown operation
@@ -72,17 +73,11 @@ class VideoFrames(BaseModel):
                 self.frames_by_window[i // self.window_size] = self.all_frames[start_idx:min(end_idx, total)]
                 self.window_index += 1
 
-    def add_subtitle(self, subtitles: str) -> None:
-        """Add a subtitle to the VideoFrames.
-
-        You must add frames before adding subtitles.
-
-        Args:
-            subtitle: The subtitle to add
-        """
+    def add_subtitle(self, subtitles: list[list[str]]) -> None:
+        """Set per-frame subtitles (nested list)."""
         self.all_subtitles = subtitles
 
-    def add_all_subtitles(self, subtitles: list[str]) -> None:
+    def add_all_subtitles(self, subtitles: list[list[str]]) -> None:
         self.all_subtitles = subtitles
     
     def partition_subtitles(self) -> None:
@@ -102,11 +97,12 @@ class VideoFrames(BaseModel):
                         self.window_by_subtitle[sub].append(i)
 
 
-    def add_embedding(self, embedding: torch.Tensor) -> None:
-        self.embeddings.append(embedding)
-    
-    def add_subtitle_embedding(self, embedding: torch.Tensor) -> None:
-        self.subtitle_embeddings.append(embedding)
+    def add_embedding(self, idx: int, embedding: torch.Tensor) -> None:
+        self.embeddings[idx] = embedding.cpu()
+   
+    def add_subtitle_embedding(self, subtitle: str, embedding: torch.Tensor) -> None:
+        self.subtitle_embeddings[subtitle] = embedding.cpu()
+
 
     def get_frame_chunk(self, window_idx: int) -> list[np.ndarray]:
         return self.frames_by_window[window_idx]
@@ -221,7 +217,7 @@ class VideoFrames(BaseModel):
         Returns:
             VideoFrames instance
         """
-        filepath = Path(filepath)
+        # filepath = Path(filepath)
 
         if method == "hybrid":
             return cls._load_hybrid(filepath)
@@ -235,10 +231,10 @@ class VideoFrames(BaseModel):
     @classmethod
     def _load_hybrid(cls, filepath: Path) -> "VideoFrames":
         """Load from hybrid format (read MP4 with Decord at 1 FPS)."""
-        base_dir = filepath.with_suffix("")
-
+        base_dir = filepath.replace(".pkl", "")
+        metadata_path = os.path.join(base_dir, "metadata.json")
         # Load metadata
-        with open(base_dir / "metadata.json", "r") as f:
+        with open(metadata_path, "r") as f:
             metadata = json.load(f)
 
         # Create VideoFrames instance
@@ -257,14 +253,14 @@ class VideoFrames(BaseModel):
             unique_subtitles_by_window={
                 str(k): v for k, v in metadata.get("unique_subtitles_by_window", {}).items()
             },
-            all_subtitles=metadata.get("all_subtitles", []),
+            all_subtitles=[subs for subs in metadata.get("all_subtitles")],
         )
 
         # Read frames video
         video_file = metadata.get("video_file", "frames.mp4")
-        video_path = base_dir / video_file
+        video_path = os.path.join(base_dir, "frames.mp4")
         frames: list[np.ndarray] = []
-        if _HAS_DECORD and video_path.exists():
+        if _HAS_DECORD and os.path.exists(video_path):
             vr = DecordVideoReader(str(video_path), ctx=decord_cpu(0))
             for idx in range(len(vr)):
                 frame_nd = vr[idx]
@@ -285,13 +281,13 @@ class VideoFrames(BaseModel):
         video_frames.partition_frames()
 
         # Load embeddings
-        embeddings_file = base_dir / "embeddings.pt"
-        if embeddings_file.exists():
-            video_frames.embeddings = torch.load(embeddings_file)
+        embeddings_file = os.path.join(base_dir, "embeddings.pt")
+        if os.path.exists(embeddings_file):
+            video_frames.embeddings = torch.load(embeddings_file, map_location=torch.device('cpu'))
         
-        subtitle_embeddings_file = base_dir / "subtitle_embeddings.pt"
-        if subtitle_embeddings_file.exists():
-            video_frames.subtitle_embeddings = torch.load(subtitle_embeddings_file)
+        subtitle_embeddings_file = os.path.join(base_dir, "subtitle_embeddings.pt")
+        if os.path.exists(subtitle_embeddings_file):
+            video_frames.subtitle_embeddings = torch.load(subtitle_embeddings_file, map_location=torch.device('cpu'))
 
         return video_frames
 
