@@ -13,7 +13,6 @@ from data.lvb import LongVideoBench
 import hydra
 from omegaconf import DictConfig
 
-OUTPUT_DIR = "output"
 
 
 def build_options_string(candidates: list[str]) -> str:
@@ -49,7 +48,10 @@ def calculate_accuracy(results: list[dict]) -> float:
 
 
 
-
+def write_results(results: list[dict], file_path: str):
+    with open(file_path, "w") as f:
+        json.dump(results, f)
+    
 
 @hydra.main(version_base=None, config_path="../src/vseek/config/retriever", config_name="config")
 def main(cfg: DictConfig):
@@ -68,8 +70,21 @@ def main(cfg: DictConfig):
     data_root = Path(cfg.retriever.index_path).joinpath(dir_name)
 
     results = []
-
-    for entry in tqdm(entries, desc="Processing LVB entries"):
+    results_path = f"{cfg.inference.output_dir}/{cfg.dataset.name}_{cfg.retriever.window_size}"
+    results_file = f"{results_path}/agent_results.json"
+    if not os.path.exists(results_file):
+        os.makedirs(results_path, exist_ok=True)
+    if os.path.exists(results_file):
+        with open(results_file, "r") as f:
+            results = json.load(f)
+    completed_entries = set([result["question_id"] for result in results])
+    
+    remaining_entries = []
+    for entry in entries:
+        if entry["metadata"]["id"] not in completed_entries:
+            remaining_entries.append(entry)
+    
+    for entry in tqdm(remaining_entries, desc="Processing LVB entries"):
         video_id = entry["metadata"]["video_id"]
         pkl_path = data_root.joinpath(f"{video_id}")
         if not pkl_path.exists():
@@ -106,6 +121,7 @@ def main(cfg: DictConfig):
 
         result = {
             "video_id": video_id,
+            "question_id": entry['metadata']['id'],
             "pred": pred,
             "gt": str(correct_choice),
             "parsed_pred": parse_answer(pred),
@@ -114,7 +130,8 @@ def main(cfg: DictConfig):
         
         # Log each result immediately
         # log_result(json_log_path, detailed_log_path, result, question, candidates, options_str)
-        
+        results_path = f"{cfg.dataset.name}_{cfg.retriever.window_size}"
+        write_results(results, f"{cfg.inference.output_dir}/{results_path}/agent_results.json")
         print(f"Video {video_id}: Pred='{pred}' -> Parsed='{result['parsed_pred']}', GT='{correct_choice}'")
 
     # Calculate and display accuracy

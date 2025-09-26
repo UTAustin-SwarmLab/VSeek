@@ -24,6 +24,7 @@ inference:
   topk: 1
   max_parse_attempts: 3
   max_reasoning_attempts: 5
+  output_dir: "output"
 dataset:
   name: "lvb"
   desired_interval_in_sec: ${retriever.desired_interval_in_sec}
