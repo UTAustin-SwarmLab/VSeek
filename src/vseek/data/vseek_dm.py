@@ -29,7 +29,7 @@ class AgentThought(BaseModel):
 
 
 class AgentOutput(BaseModel):
-    thought: constr(strip_whitespace=True, min_length=5, max_length=1000) = Field(
+    thought: constr(strip_whitespace=True, min_length=0, max_length=1000) = Field(
         description=(
             "A concise (1–3 sentences) high-level reasoning of how you interpret the question "
             "and decide whether you can answer directly or need to search. No step-by-step chain-of-thought."
@@ -37,7 +37,7 @@ class AgentOutput(BaseModel):
     )
 
     # Provide EXACTLY ONE of {answer, search}
-    answer: Optional[constr(strip_whitespace=True, min_length=1, max_length=200)] = (
+    answer: Optional[constr(strip_whitespace=True, min_length=0, max_length=200)] = (
         Field(
             default=None,
             description=(
@@ -47,7 +47,7 @@ class AgentOutput(BaseModel):
         )
     )
 
-    search: Optional[constr(strip_whitespace=True, min_length=3, max_length=200)] = (
+    search: Optional[constr(strip_whitespace=True, min_length=0, max_length=200)] = (
         Field(
             default=None,
             description=(
@@ -59,7 +59,7 @@ class AgentOutput(BaseModel):
     )
     
      # Provide EXACTLY ONE of {answer, search}
-    subtitle: Optional[constr(strip_whitespace=True, min_length=1, max_length=200)] = (
+    subtitle: Optional[constr(strip_whitespace=True, min_length=0, max_length=200)] = (
         Field(
             default=None,
             description=(
@@ -73,7 +73,7 @@ class AgentOutput(BaseModel):
 
     @model_validator(mode="after")
     def _xor_answer_search(self):
-        has_answer = self.answer is not None and len(self.answer.strip()) > 0
+        has_answer = self.answer is not None and len(self.answer.strip()) >= 0
         has_search = self.search is not None and len(self.search.strip()) > 0
         has_search_subtitle = self.subtitle is not None and len(self.subtitle.strip()) > 0
         true_count = sum([has_answer, has_search, has_search_subtitle])

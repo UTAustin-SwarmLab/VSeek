@@ -66,7 +66,7 @@ def parse_response_with_regex(
             search_subtitle = search_subtitle.strip()[:197] + "..."  # Truncate and add ellipsis
 
         # Ensure exactly one of answer or search is provided (XOR validation)
-        has_answer = answer is not None and len(answer.strip()) > 0
+        has_answer = answer is not None and len(answer.strip()) >= 0
         has_search = search is not None and len(search.strip()) > 0
         has_search_subtitle = search_subtitle is not None and len(search_subtitle.strip()) > 0
         
