@@ -8,7 +8,7 @@ ENV_FILE_PATH = "/home/mc767728/repo/Swarmlab/VSeek-R1/.env"
 class DataSetting(BaseSettings):
     dataset_name: str = "LongVideoBench"
     output_dir: str = "/nas/mars/dataset/vseek/dataset"
-    window_size: int = 10
+    window_size: int = 16
 
     class Config:
         env_file = ENV_FILE_PATH
@@ -23,7 +23,7 @@ class ViClipSetting(BaseSettings):
     text_encoder_model_path: str = (
         "/nas/mars/model_weights/viclip/bpe_simple_vocab_16e6.txt.gz"
     )
-    gpu_number: int = 4
+    gpu_number: int = 2
 
     class Config:
         env_file = ENV_FILE_PATH

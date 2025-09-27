@@ -1,13 +1,20 @@
 import enum
 import logging
 import uuid
-from dataclasses import field
 from pathlib import Path
 
 import cv2
 import numpy as np
 from PIL import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# Prefer Decord for fast video decoding; fallback to OpenCV if unavailable
+try:
+    from decord import VideoReader as DecordVideoReader
+    from decord import cpu as decord_cpu
+    _HAS_DECORD = True
+except Exception:  # ImportError or other runtime issues
+    _HAS_DECORD = False
 
 
 class VideoFormat(enum.Enum):
@@ -24,11 +31,13 @@ class VideoInfo(BaseModel):
     frame_width: int
     frame_height: int
     original_frame_count: int
-    video_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    video_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     video_path: str | None = None
     processed_fps: float | None = None
-    processed_frame_count: int = 1
+    processed_frame_count: int = 0
     original_fps: float | None = None
+    original_duration: float | None = None
+    frame_step: int | None = None
 
 
 class Video:
@@ -51,6 +60,7 @@ class Video:
         self._video_path = video_path
         self._read_format = read_format
         self.video_info = None
+        self._using_decord = False
         if sequence_of_image:
             self.all_frames = sequence_of_image
             if isinstance(sequence_of_image[0], list):
@@ -76,23 +86,51 @@ class Video:
         """
         logging.info(f"Video format: {self._read_format}")
         if self._read_format == VideoFormat.MP4:
-            self._cap = cv2.VideoCapture(video_path)
-            ret, _ = self._cap.read()
-            if not ret:
-                logging.error("Video path is invalid.")
+            if _HAS_DECORD:
+                try:
+                    self._vr = DecordVideoReader(video_path, ctx=decord_cpu(0))
+                    self._using_decord = True
+                    # Probe 1st frame to get width/height
+                    first_frame = self._vr[0]
+                    # Decord returns (H, W, C)
+                    height, width = int(first_frame.shape[0]), int(first_frame.shape[1])
+                    original_fps = float(self._vr.get_avg_fps()) if hasattr(self._vr, "get_avg_fps") else None
+                    original_frame_count = int(len(self._vr))
+                    self.video_info = VideoInfo(
+                        video_path=str(self._video_path),
+                        format=self._read_format,
+                        frame_width=width,
+                        frame_height=height,
+                        original_fps=original_fps,
+                        original_frame_count=original_frame_count,
+                        original_duration=(float(original_frame_count) / float(original_fps) if original_fps else None),
+                    )
+                except Exception as e:
+                    logging.warning(f"Decord failed to open video, falling back to OpenCV. Reason: {e}")
+                    self._using_decord = False
+            if not self._using_decord:
+                self._cap = cv2.VideoCapture(video_path)
+                ret, probe_frame = self._cap.read()
+                if not ret:
+                    logging.error("Video path is invalid or cannot be read.")
+                frame_width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                frame_height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                original_fps = float(self._cap.get(cv2.CAP_PROP_FPS)) if self._cap.get(cv2.CAP_PROP_FPS) else None
+                original_frame_count = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                self.video_info = VideoInfo(
+                    video_path=str(self._video_path),
+                    format=self._read_format,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                    original_fps=original_fps,
+                    original_frame_count=original_frame_count,
+                    original_duration=(float(original_frame_count) / float(original_fps) if original_fps else None),
+                )
+        elif self._read_format == VideoFormat.LIST_OF_ARRAY:
             self.video_info = VideoInfo(
-                video_path=str(self._video_path),
                 format=self._read_format,
-                frame_width=int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                frame_height=int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                original_fps=self._cap.get(cv2.CAP_PROP_FPS),
-                original_frame_count=int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT)),
-            )
-        elif self._read_format.LIST_OF_ARRAY:
-            self.video_info = VideoInfo(
-                format=self._read_format,
-                frame_width=int(self.all_frames[0].shape[0]),
-                frame_height=int(self.all_frames[0].shape[1]),
+                frame_width=int(self.all_frames[0].shape[1]),
+                frame_height=int(self.all_frames[0].shape[0]),
                 original_frame_count=len(self.all_frames),
             )
 
@@ -157,28 +195,48 @@ class Video:
             raise ValueError(msg)
 
         if self._read_format == VideoFormat.MP4:
-            frame_step = self.get_frame_step(
-                desired_fps=desired_fps,
-                desired_interval_in_sec=desired_interval_in_sec,
-            )
+            original_fps = self.video_info.original_fps or 0.0
+            if desired_fps is not None:
+                if desired_fps <= 0:
+                    raise ValueError("desired_fps must be > 0")
+                frame_step = int(round(original_fps / desired_fps)) if original_fps > 0 else 1
+                processed_fps = float(desired_fps)
+            else:
+                if desired_interval_in_sec is None or desired_interval_in_sec <= 0:
+                    raise ValueError("desired_interval_in_sec must be > 0")
+                frame_step = int(round(original_fps * desired_interval_in_sec)) if original_fps > 0 else 1
+                processed_fps = round(1.0 / desired_interval_in_sec, 2)
+
+            frame_step = max(1, int(frame_step))
 
             for real_frame_idx in range(
                 0, int(self.video_info.original_frame_count), int(frame_step)
             ):
-                self._cap.set(cv2.CAP_PROP_POS_FRAMES, real_frame_idx)
-                ret, frame_img = self._cap.read()
-                frame_img = cv2.cvtColor(frame_img, cv2.COLOR_BGR2RGB)
-                if not ret:
-                    break
+                if getattr(self, "_using_decord", False):
+                    try:
+                        frame_nd = self._vr[real_frame_idx]
+                        # Decord returns RGB NDArray; convert to numpy if needed
+                        frame_img = (
+                            frame_nd.asnumpy() if hasattr(frame_nd, "asnumpy") else np.asarray(frame_nd)
+                        )
+                    except Exception:
+                        break
+                else:
+                    self._cap.set(cv2.CAP_PROP_POS_FRAMES, real_frame_idx)
+                    ret, frame_img = self._cap.read()
+                    if not ret:
+                        break
+                    frame_img = cv2.cvtColor(frame_img, cv2.COLOR_BGR2RGB)
+
                 frame_img = self.process_frame_image(
                     frame_img=frame_img,
                     frame_scale=frame_scale,
                     return_format=return_format,
                 )
                 all_frames.append(frame_img)
-            self._cap.release()
-            # cv2.destroyAllWindows()
-            self.processed_frame_count = len(all_frames)
+            if hasattr(self, "_cap") and self._cap is not None:
+                self._cap.release()
+            self.video_info.processed_frame_count = len(all_frames)
         return all_frames
 
     def get_next_frame(
@@ -223,15 +281,21 @@ class Video:
                 desired_interval_in_sec=desired_interval_in_sec,
             )
             # Skip to the next frame based on frame_step
-            self._cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_index)
-
-            ret, frame_img = self._cap.read()
-
-            if not ret:
-                self.video_ended = True
-                return None  # No more frames or error occurred
-
-            frame_img = cv2.cvtColor(frame_img, cv2.COLOR_BGR2RGB)
+            if getattr(self, "_using_decord", False):
+                if self.current_frame_index >= int(self.video_info.original_frame_count):
+                    self.video_ended = True
+                    return None
+                frame_nd = self._vr[self.current_frame_index]
+                frame_img = (
+                    frame_nd.asnumpy() if hasattr(frame_nd, "asnumpy") else np.asarray(frame_nd)
+                )
+            else:
+                self._cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_index)
+                ret, frame_img = self._cap.read()
+                if not ret:
+                    self.video_ended = True
+                    return None  # No more frames or error occurred
+                frame_img = cv2.cvtColor(frame_img, cv2.COLOR_BGR2RGB)
 
         if self._read_format == VideoFormat.LIST_OF_ARRAY:
             if self.current_frame_index < len(self.all_frames):
@@ -295,16 +359,27 @@ class Video:
         Returns:
             int: Calculated frame step.
         """  # noqa: E501
-        if desired_fps is not None:
-            frame_step = int(round(self.video_info.original_fps / desired_fps))
-            processed_fps = desired_fps
-        if desired_interval_in_sec is not None:
-            frame_step = int(
-                round(self.video_info.original_fps * desired_interval_in_sec)
+        # Validate parameters
+        if (desired_fps is None) == (desired_interval_in_sec is None):
+            raise ValueError(
+                ("Either desired_fps or desired_interval_in_sec must be provided, but not both.")
             )
-            processed_fps = round(1 / desired_interval_in_sec, 2)
-        self.video_info.processed_fps = processed_fps
 
+        original_fps = self.video_info.original_fps or 0.0
+        if desired_fps is not None:
+            if desired_fps <= 0:
+                raise ValueError("desired_fps must be > 0")
+            frame_step = int(round(original_fps / desired_fps)) if original_fps > 0 else 1
+            processed_fps = float(desired_fps)
+        else:
+            if desired_interval_in_sec is None or desired_interval_in_sec <= 0:
+                raise ValueError("desired_interval_in_sec must be > 0")
+            frame_step = int(round(original_fps * desired_interval_in_sec)) if original_fps > 0 else 1
+            processed_fps = round(1.0 / desired_interval_in_sec, 2)
+
+        frame_step = max(1, int(frame_step))
+        self.video_info.processed_fps = processed_fps
+        self.video_info.frame_step = frame_step
         return frame_step
 
     def _seconds_to_timestamp(self, seconds: float) -> str:
@@ -351,7 +426,12 @@ class Video:
         Returns:
             tuple[float, float]: The start and end timestamp of the video.
         """
-        return self.video_info.start_timestamp, self.video_info.end_timestamp
+        if self.video_info.original_fps and self.video_info.original_fps > 0:
+            duration = float(self.video_info.original_frame_count) / float(self.video_info.original_fps)
+        else:
+            # Fallback: use frame indices as seconds if FPS unknown
+            duration = float(self.video_info.original_frame_count)
+        return 0.0, duration
 
     def insert_annotation_to_current_frame(self, annotations: list[str]) -> None:
         """Insert annotations to the current frame.

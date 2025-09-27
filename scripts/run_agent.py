@@ -45,6 +45,7 @@ if __name__ == "__main__":
             max_image_width=384,  # Reduced from default 512
             max_image_height=384,  # Reduced from default 512
             image_quality=90,  # Higher quality for better parsing
+            temperature=1.0,
         )
         # VLM(V, Q, A)
         trajectory = vlm_client.run(data_input)

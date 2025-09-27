@@ -6,16 +6,13 @@ import os
 from tqdm import tqdm
 from vseek.data.exp_io import DataInput
 from vseek.data.frame import VideoFrames
-from vseek.setting import DataSetting, VLLMSetting
 from vseek.agent.video_agent import VSeekAgent
 
 # LongVideoBench dataset helper
 from data.lvb import LongVideoBench
+import hydra
+from omegaconf import DictConfig
 
-VLLM_SETTING = VLLMSetting()
-DATA_SETTING = DataSetting()
-
-OUTPUT_DIR = "output"
 
 
 def build_options_string(candidates: list[str]) -> str:
@@ -51,26 +48,43 @@ def calculate_accuracy(results: list[dict]) -> float:
 
 
 
-
-
-if __name__ == "__main__":
-    # Setup logging
-    json_log_path, detailed_log_path = setup_logging()
-    print(f"Logging results to:")
-    print(f"  JSON: {json_log_path}")
-    print(f"  Detailed: {detailed_log_path}")
+def write_results(results: list[dict], file_path: str):
+    with open(file_path, "w") as f:
+        json.dump(results, f)
     
-    lvb = LongVideoBench()
+
+@hydra.main(version_base=None, config_path="../src/vseek/config/retriever", config_name="config")
+def main(cfg: DictConfig):
+    # Setup logging
+    # json_log_path, detailed_log_path = setup_logging()
+    print(f"Logging results to:")
+    # print(f"  JSON: {json_log_path}")
+    # print(f"  Detailed: {detailed_log_path}")
+    
+    lvb = LongVideoBench(cfg)
     entries = lvb.load_data()
 
-    window_size = DATA_SETTING.window_size
+    window_size = cfg.retriever.window_size
     dataset_name = "lvb"
     dir_name = f"{dataset_name}_window_{window_size}"
-    data_root = Path(DATA_SETTING.output_dir).joinpath(dir_name)
+    data_root = Path(cfg.retriever.index_path).joinpath(dir_name)
 
     results = []
-
-    for entry in tqdm(entries, desc="Processing LVB entries"):
+    results_path = f"{cfg.inference.output_dir}/{cfg.dataset.name}_{cfg.retriever.window_size}"
+    results_file = f"{results_path}/agent_results.json"
+    if not os.path.exists(results_file):
+        os.makedirs(results_path, exist_ok=True)
+    if os.path.exists(results_file):
+        with open(results_file, "r") as f:
+            results = json.load(f)
+    completed_entries = set([result["question_id"] for result in results])
+    
+    remaining_entries = []
+    for entry in entries:
+        if entry["metadata"]["id"] not in completed_entries:
+            remaining_entries.append(entry)
+    
+    for entry in tqdm(remaining_entries, desc="Processing LVB entries"):
         video_id = entry["metadata"]["video_id"]
         pkl_path = data_root.joinpath(f"{video_id}")
         if not pkl_path.exists():
@@ -94,15 +108,12 @@ if __name__ == "__main__":
             question=question,
             options=options_str,
             answer=str(correct_choice),
+            video_id=video_id,
         )
 
         vlm_client = VSeekAgent(
-            api_key=VLLM_SETTING.openai_api_key,
-            api_base=VLLM_SETTING.api_base,
-            model=VLLM_SETTING.model,
-            max_image_width=384,
-            max_image_height=384,
-            image_quality=90,
+            config=cfg,
+
         )
 
         trajectory = vlm_client.run(data_input)
@@ -110,6 +121,7 @@ if __name__ == "__main__":
 
         result = {
             "video_id": video_id,
+            "question_id": entry['metadata']['id'],
             "pred": pred,
             "gt": str(correct_choice),
             "parsed_pred": parse_answer(pred),
@@ -117,8 +129,9 @@ if __name__ == "__main__":
         results.append(result)
         
         # Log each result immediately
-        log_result(json_log_path, detailed_log_path, result, question, candidates, options_str)
-        
+        # log_result(json_log_path, detailed_log_path, result, question, candidates, options_str)
+        results_path = f"{cfg.dataset.name}_{cfg.retriever.window_size}"
+        write_results(results, f"{cfg.inference.output_dir}/{results_path}/agent_results.json")
         print(f"Video {video_id}: Pred='{pred}' -> Parsed='{result['parsed_pred']}', GT='{correct_choice}'")
 
     # Calculate and display accuracy
@@ -127,7 +140,11 @@ if __name__ == "__main__":
     print(f"Accuracy: {accuracy:.3f} ({sum(1 for r in results if r['parsed_pred'] == r['gt'])}/{len(results)})")
     
     # Log final summary
-    log_summary(json_log_path, detailed_log_path, results, accuracy)
-    print(f"\nResults logged to:")
-    print(f"  JSON: {json_log_path}")
-    print(f"  Detailed: {detailed_log_path}")
+    # log_summary(json_log_path, detailed_log_path, results, accuracy)
+    # print(f"\nResults logged to:")
+    # print(f"  JSON: {json_log_path}")
+    # print(f"  Detailed: {detailed_log_path}")
+
+
+if __name__ == "__main__":
+    main()

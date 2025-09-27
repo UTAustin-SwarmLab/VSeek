@@ -66,7 +66,7 @@ def parse_response_with_regex(
             search_subtitle = search_subtitle.strip()[:197] + "..."  # Truncate and add ellipsis
 
         # Ensure exactly one of answer or search is provided (XOR validation)
-        has_answer = answer is not None and len(answer.strip()) > 0
+        has_answer = answer is not None and len(answer.strip()) >= 0
         has_search = search is not None and len(search.strip()) > 0
         has_search_subtitle = search_subtitle is not None and len(search_subtitle.strip()) > 0
         
@@ -82,7 +82,7 @@ def parse_response_with_regex(
                 return None
             else:
                 return AgentOutput(
-                    thought=thought.strip(),
+                    thought=thought.strip() if thought else "",
                     answer="",
                     search="",
                     subtitle="",
@@ -90,7 +90,7 @@ def parse_response_with_regex(
 
         # Create AgentOutput object
         return AgentOutput(
-            thought=thought.strip(),
+            thought=thought.strip() if thought else "",
             answer=answer.strip() if answer else None,
             search=search.strip() if search else None,
             subtitle=search_subtitle.strip() if search_subtitle else None,
