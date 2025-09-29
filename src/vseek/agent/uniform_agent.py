@@ -49,6 +49,21 @@ class UniformSampleAgent(LocalVLLMBase):
             C
         """
         
+        system_prompt_cot = """
+            You are a helpful assistant. Look at the provided images sampled uniformly from a video and answer the question concisely.
+            You must answer the question with the correct option within the <answer></answer> tags. 
+            Do not provide empty fields and you must provide an answer to the best of your ability.
+
+            **EXAMPLES**:
+            (the agent receives a video in the form of series of images)
+            Question: What is the first ingredient the chef adds to the mixing bowl? Options: A. Mint , B. Sugar, C. Salt, D. Flour
+            D
+           
+           (the agent receives a video in the form of series of images)
+            Question: What is the color of the unicorn? Options: A. Green, B. Blue, C. Pink, D. White
+            C
+        """
+
 
         if video_path:
             print("Using video pathway")
@@ -57,21 +72,13 @@ class UniformSampleAgent(LocalVLLMBase):
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": [
-                    {"type": "text", "text": "Describe the video content in detail."},
+                    {"type": "text", "text": user_content},
                     {"type": "video", "video": VIDEO_PATH, "total_pixels": args.max_pixels, "nframes": args.nframes, "fps": args.fps},
                 ]},
             ]
 
-            data = self.chat_with_video(
-                system_prompt=system_prompt,
-                user_content=user_content,
-                video_path=video_path,
-                max_tokens=1,
-                temperature=self.temperature,
-                fps=1,
-                max_frames=int(self.max_images),
-            )
-            content = data["choices"][0]["message"]["content"]
+            content = self.generate_text(messages)
+            # content = data["choices"][0]["message"]["content"]
             # user_content = [
             #     {"type": "text", "text": f"Question: {data_input.question} Options: {data_input.options}"},
             # ]
@@ -103,18 +110,14 @@ class UniformSampleAgent(LocalVLLMBase):
 
             for enc in encoded_images:
                 user_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{enc}"}})
+            
             user_content.append({"type": "text", "text": f"Question: {data_input.question} Options: {data_input.options}"})
-            chat_response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
-                max_tokens=1,
-                temperature=self.temperature,
-            )
-
-            content = chat_response.choices[0].message.content
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ]
+            content = self.generate_text(messages)
+            # content = chat_response.choices[0].message.content
 
         # agent_output = parse_response_with_regex(content)
         
