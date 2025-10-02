@@ -14,7 +14,7 @@ class UniformSampleAgent(LocalVLLMBase):
         config,
     ):
         super().__init__(config=config)
-
+        self.config = config
         self.max_image_width = config.inference.max_image_width
         self.max_image_height = config.inference.max_image_height
         self.image_quality = config.inference.image_quality
@@ -32,21 +32,24 @@ class UniformSampleAgent(LocalVLLMBase):
 
     def run(self, data_input: DataInput) -> ReasoningTrajectory:
         # Prefer native video pathway if available; otherwise fall back to frames-as-images.
-        video_path = getattr(data_input.video, "video_path", None)
-
+        # video_path = getattr(data_input.video, "video_path", None)
+        video_path = None
+        
         system_prompt = """
-            You are a helpful assistant. Look at the provided images sampled uniformly from a video and answer the question concisely.
-            You must answer the question with the correct option within the <answer></answer> tags. 
-            Do not provide empty fields and you must provide an answer to the best of your ability.
-
+            You are a helpful assistant. Look at the provided images sampled uniformly from a video and must choose the correct option from the given options to answer the question.
+            You must only output the number of the correct option.
+        """
+        system_prompt_examples = """
+            You are a helpful assistant. Look at the provided images sampled uniformly from a video and must choose the correct option from the given options to answer the question.
+            You must only output the number of the correct option.
             **EXAMPLES**:
             (the agent receives a video in the form of series of images)
-            Question: What is the first ingredient the chef adds to the mixing bowl? Options: A. Mint , B. Sugar, C. Salt, D. Flour
-            D
+            Question: What is the first ingredient the chef adds to the mixing bowl? Options: 0. Mint , 1. Sugar, 2. Salt, 3. Flour
+            3
            
            (the agent receives a video in the form of series of images)
-            Question: What is the color of the unicorn? Options: A. Green, B. Blue, C. Pink, D. White
-            C
+            Question: What is the color of the unicorn? Options: 0. Green, 1. Blue, 2. Pink, 3. White 4. Yellow
+            2
         """
         
         system_prompt_cot = """
@@ -68,12 +71,12 @@ class UniformSampleAgent(LocalVLLMBase):
         if video_path:
             print("Using video pathway")
             user_content = f"Question: {data_input.question} Options: {data_input.options}"
-            
+            print(user_content)
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": [
                     {"type": "text", "text": user_content},
-                    {"type": "video", "video": VIDEO_PATH, "total_pixels": args.max_pixels, "nframes": args.nframes, "fps": args.fps},
+                    {"type": "video", "video": data_input.video.video_path, "max_frames": self.config.inference.max_images_per_turn, "fps": 1},
                 ]},
             ]
 
@@ -109,7 +112,7 @@ class UniformSampleAgent(LocalVLLMBase):
             user_content = []
 
             for enc in encoded_images:
-                user_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{enc}"}})
+                user_content.append({"type": "image_url", "image_url": f"data:image/jpeg;base64,{enc}"})
             
             user_content.append({"type": "text", "text": f"Question: {data_input.question} Options: {data_input.options}"})
             messages = [
