@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import requests
 
 from vseek.agent.utils.parse_response import parse_response_with_regex
@@ -22,6 +23,7 @@ class VSeekAgent(VLLMClient):
         self.server_url = config.llm.server_url
         self.model = config.llm.model
         self.openai_api_key = config.llm.openai_api_key
+        self.max_images_per_turn = getattr(config.inference, "max_images_per_turn", 20)
 
         self.retriever_server_url = config.retriever.server_url
         # Tradeoff between topk and number of effective frames from each window
@@ -125,12 +127,13 @@ class VSeekAgent(VLLMClient):
         4. If you can definitively answer the question with the current information, provide the final answer inside <answer> and </answer> tags.
         5. If you need more information to answer the question, issue a precise video search query inside <search> and </search> tags. Your query should help you find the next relevant segment of the video. Ensure that the search query is not too general, long, vague or repeated across turns.
         Each search query should be a concise (1–3 sentences), optimized video search query ONLY if you cannot answer. Include specific entities/objects/ and actions when available.
-        6. Crucially, you must output exactly ONE tag from (<answer> or <search>) per turn and a <think> tag. Do not provide both.
+        6. Crucially, you must output exactly ONE non empty field from (<answer> or <search>) per turn and a non empty <think> field. Do not provide both and do not provide empty fields.
         7. You will have access to the history of each turn so far. You can take a maximum of 4 turns to answer the question.
+        8. The options are numbered from 0 to N-1. You MUST answer the question with only one of the option number. You must not provide any other text in the <answer> tag.
 
         **EXAMPLES**:
         EXAMPLE 1:
-        Question: What is the first ingredient the chef adds to the mixing bowl? Options: A. , B. Sugar, C. Salt, D. Flour
+        Question: What is the first ingredient the chef adds to the mixing bowl? Options: 0. Mint , 1. Sugar, 2. Salt, 3. Flour
 
         Turn 1:
         <think>To answer the question, I first need to locate the part of the video where the chef is using a mixing bowl.</think>
@@ -142,21 +145,21 @@ class VSeekAgent(VLLMClient):
         (After the second search, the agent receives frames of the chef pouring flour into the bowl.)
         Turn 3:
         <think>These frames clearly show the chef adding a white powder, which appears to be flour, into the bowl. This is the first ingredient. I can now answer the question.</think>
-        <answer>D</answer>
+        <answer>3</answer>
 
         EXAMPLE 2: Temporal Reasoning 
-        Question: What does the person do right after picking up the red ball? Options: A.Put it in a box , B. Throw it to a dog, C. Put it on a shelf, D. Put it in a bag
+        Question: What does the person do right after picking up the red ball? Options: 0.Put it in a box , 1. Throw it to a dog, 2. Put it on a shelf, 3. Put it in a bag
 
         Turn 1:
         <think>I need to first find the moment the person picks up the red ball.</think>
         <search>a person picking up a red ball</search>
         (After the search, the agent receives frames of a person bending over and grabbing a red ball.)
         Turn 2:
-        <think>I have found the event where the person picks up the red ball. Now I need to observe the immediate next action to answer the question. The immediate next action is throwing the ball to a dog hence I can answer the question with the option B.</think>
-        <answer>B</answer>
+        <think>I have found the event where the person picks up the red ball. Now I need to observe the immediate next action to answer the question. The immediate next action is throwing the ball to a dog hence I can answer the question with the option 1.</think>
+        <answer>1</answer>
         
-        EXAMPLE 3: Repetition
-        Question: What does the person do right after picking up the red ball? Options: A.Put it in a box , B. Throw it to a dog, C. Put it on a shelf, D. Put it in a bag
+        EXAMPLE 3: Handling Repetition Cases
+        Question: What does the person do right after picking up the red ball? Options: 0.Put it in a box , 1. Throw it to a dog, 2. Put it on a shelf, 3. Put it in a bag
 
         Turn 1:
         <think>I need to first find the moment the person picks up the red ball.</think>
@@ -166,7 +169,7 @@ class VSeekAgent(VLLMClient):
         <think>I don't have enough context as the provided video does not include any relevant frames. I need to write a better search query. </think>
         <search>a person wearing tshirtpicking up a red ball in the room</search>
         <think>I have found the event where the person picks up the red ball. The immediate next action is throwing the ball to a dog hence I can answer the question with the option B.</think>
-        <answer>B</answer>
+        <answer>1</answer>
         """
         
         iteration = 0
@@ -175,6 +178,7 @@ class VSeekAgent(VLLMClient):
         encoded_images = []
         assistant_content = None
         message_content = [{"role": "system", "content": system_prompt}]
+        total_images=0
         while True:
             if iteration == 0:
                 video_window_idx = 0
@@ -186,11 +190,35 @@ class VSeekAgent(VLLMClient):
                 ]
             else:
                 encoded_images = []
+                user_content = []
                 for idx in video_window_idx:
                     encoded_images += [
                         self._encode_frame(frame)
                         for frame in data_input.video.get_frame_chunk(idx)
                     ]
+                
+                # Subsample the encoded images to the max_images_per_turn uniformly
+                if len(encoded_images) > self.max_images_per_turn:
+                    n = len(encoded_images)
+                    k = int(self.max_images_per_turn)
+                    if k <= 0:
+                        encoded_images = []
+                    elif k == 1:
+                        encoded_images = [encoded_images[n // 2]]
+                    else:
+                        indices = np.linspace(0, n - 1, k, dtype=int).tolist()
+                        encoded_images = [encoded_images[i] for i in indices]
+                
+                prev_total_images = total_images
+                total_images += len(encoded_images)
+                
+                if total_images > 150:
+                    extra_images = total_images - 150
+                    encoded_images = encoded_images[:-extra_images]
+                    total_images = prev_total_images + len(encoded_images)
+                
+                print("total_images: ", total_images)
+
             # # Build the user message: a text prompt plus one image for each frame.
 
             for encoded in encoded_images:
@@ -200,8 +228,19 @@ class VSeekAgent(VLLMClient):
                         "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
                     }
                 )
+            print(len(user_content))
             message_content.append({"role": "user", "content": user_content})
 
+            # Find number of images in message_content
+            num_message_images = 0
+            for message in message_content:
+                if message["role"] == "user":
+                    for content in message["content"]:
+                        if content["type"] == "image_url":
+                            num_message_images += 1
+            print(f"Number of images in message_content: {num_message_images}")
+            # Print number of images in user_content
+                
             chat_response = self.client.chat.completions.create(
                 model=self.model,
                 messages=message_content,
@@ -244,7 +283,7 @@ class VSeekAgent(VLLMClient):
                     print("Search indices: ", search_indices)
                     # Use the most relevant video segment for next iteration
                     if search_indices:
-                        video_window_idx = search_indices[:self.topk]
+                        video_window_idx = sorted(search_indices[:self.topk])
 
                     iteration += 1
                     if iteration >= max_reasoning_attempts:
