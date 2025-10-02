@@ -3,7 +3,7 @@ import base64
 import cv2
 import numpy as np
 from openai import OpenAI
-
+import requests
 from vseek.vlm.obj import DetectedObject
 
 
@@ -39,6 +39,39 @@ class VLLMClient:
             raise ValueError("Could not encode frame")
         return base64.b64encode(buffer).decode("utf-8")
 
+    def chat_with_video(
+        self,
+        *,
+        system_prompt: str,
+        user_content: str,
+        video_path: str,
+        max_tokens: int = 1,
+        temperature: float = 0.0,
+        fps: int = 1,
+        max_frames: int = 32,
+    ):
+        print(f"Video path: {video_path}")
+        """Post raw JSON to vLLM with a video content part embedded in messages."""
+        url = f"{self.api_base}/chat/completions"
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "video", "video": video_path, "fps": int(fps), "nframes": int(max_frames)},
+                        {"type": "text", "text": user_content},
+                    ],
+                },
+            ],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        resp = requests.post(url, json=payload, timeout=60)
+        resp.raise_for_status()
+        return resp.json()
+    
     def detect(
         self, seq_of_frames: list[np.ndarray], scene_description: str, threshold: float
     ) -> DetectedObject:

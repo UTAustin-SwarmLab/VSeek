@@ -57,6 +57,7 @@ class VideoFrames(BaseModel):
     window_index_map: dict[int, Tuple[int, int]] = Field(default_factory=dict)
     window_by_subtitle: dict[str, list[int]] = Field(default_factory=dict)
     window_index: int = Field(0, description="The current window index counter")
+    video_path: Optional[str] = Field(None, description="The path to the video")
     
     def add_all_frames(self, frames: list[np.ndarray]) -> None:
         self.all_frames = frames
@@ -150,6 +151,7 @@ class VideoFrames(BaseModel):
 
         # Prepare frames video
         video_path = base_dir / "frames.mp4"
+        self.video_path = str(video_path)
         fps = 1
         if len(self.all_frames) > 0:
             first = self.all_frames[0]
@@ -254,6 +256,7 @@ class VideoFrames(BaseModel):
                 str(k): v for k, v in metadata.get("unique_subtitles_by_window", {}).items()
             },
             all_subtitles=[subs for subs in metadata.get("all_subtitles")],
+            video_path=os.path.join(base_dir, metadata.get("video_file", "frames.mp4"))
         )
 
         # Read frames video
