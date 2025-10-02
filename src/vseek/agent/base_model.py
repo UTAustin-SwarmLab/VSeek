@@ -3,11 +3,13 @@ from typing import Any, Dict, List
 
 from transformers import AutoProcessor
 from vllm import LLM, SamplingParams
-
+import cv2
+import base64
 
 class LocalVLLMBase:
     def __init__(self, config) -> None:
         # GPU selection
+        self.config = config
         self.gpu_number = getattr(config.inference, "gpu_number", 0)
         os.environ["CUDA_VISIBLE_DEVICES"] = str(self.gpu_number)
 
@@ -32,13 +34,12 @@ class LocalVLLMBase:
                 "fps": 1,
             },
             trust_remote_code=True,
-            device=self.gpu_number,
         )
         self.sampling_params = SamplingParams(
             temperature=max(0.0, self.temperature),
             top_p=0.001,
             repetition_penalty=1.05,
-            max_tokens=512,
+            max_tokens=self.config.inference.max_output_tokens,
             stop_token_ids=[],
         )
 
@@ -63,5 +64,25 @@ class LocalVLLMBase:
         }
         outputs = self.llm.generate([llm_inputs], sampling_params=self.sampling_params)
         return outputs[0].outputs[0].text
+    
+    def _encode_frame(self, frame, max_width=512, max_height=512, quality=85):
+        # Resize frame to reduce aspect ratio and make it easier to parse
+        height, width = frame.shape[:2]
+        # Calculate scaling factor to fit within max dimensions while maintaining aspect ratio
+        scale = min(max_width / width, max_height / height)
+        
+        # Only resize if the image is larger than max dimensions
+        if scale < 1.0:
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+        
+        # Encode a uint8 numpy array (image) as a JPEG and then base64 encode it.
+        encode_params = [cv2.IMWRITE_JPEG_QUALITY, quality]
+        ret, buffer = cv2.imencode(".jpg", frame, encode_params)
+        if not ret:
+            raise ValueError("Could not encode frame")
+        return base64.b64encode(buffer).decode("utf-8")
+
 
 
