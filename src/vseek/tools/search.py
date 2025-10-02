@@ -17,13 +17,17 @@ import logging
 import os
 import asyncio
 import aiohttp
+import requests
 import torch
-from typing import Any, Optional, List, Dict
+from typing import Any, Optional, List, Dict, Tuple
 from uuid import uuid4
+from pathlib import Path
 
 from verl.tools.base_tool import BaseTool
 from verl.utils.rollout_trace import rollout_trace_op
 from verl.tools.schemas import OpenAIFunctionToolSchema, ToolResponse
+from vseek.data.frame import VideoFrames
+from data.lvb import LongVideoBench
 
 from vseek.video_embedding.video_clip import ViClip
 from vseek.setting import ViClipSetting
@@ -61,7 +65,7 @@ class VideoSearchTool(BaseTool):
                 "type": "function",
                 "function": {
                     "name": "video_search",
-                    "description": "Searches for relevant video frames based on text queries.",
+                    "description": "Searches for relevant video frames based on the text or subtitle text queries.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -69,12 +73,16 @@ class VideoSearchTool(BaseTool):
                                 "type": "string",
                                 "description": "Text query describing what to search for in the video"
                             },
-                            "topk": {
-                                "type": "integer",
-                                "description": "Number of top results to return (default: 5)"
-                            }
+                            "subtitle": {
+                                "type": "string",
+                                "description": "Subtitle text that you want to search for in the video"
+                            },
+                            
                         },
-                        "required": ["query"]
+                        "oneOf": [
+                            {"required": ["query"]},
+                            {"required": ["subtitle"]}
+                        ],
                     }
                 }
             }
@@ -85,15 +93,78 @@ class VideoSearchTool(BaseTool):
         # Background server configuration
         self.server_url = config.get("server_url", "http://localhost:9000")
         self.timeout = config.get("timeout", 30)
-        self.topk = config.get("topk", 5)
+        self.topk = config.get("topk", 4)
+        self.dataset_name = config.get("dataset_name", "lvb")
+        self.window_size = config.get("window_size", 4)
+        self.index_path = config.get("index_path", "data/index")
+        
+        # Initialize all the frames as per the dataset
+        
+        dir_name = f"{self.dataset_name}_window_{self.window_size}"
+        data_root = Path(self.index_path).joinpath(dir_name)
+        
+        if self.dataset_name == "lvb":
+            dataset = LongVideoBench(config)
+            self.entries = dataset.load_data()
+        else:
+            raise ValueError(f"Unsupported dataset: {self.dataset_name}")
+        
+        logger.info(f"Loading video index from: {data_root}")
+        self.frames_dict = {
+            entry["metadata"]["video_id"]: VideoFrames.load(str(data_root.joinpath(entry["metadata"]["video_id"])))
+            for entry in self.entries
+        }
         
         # ViClip model for text embeddings
 
         logger.info(f"Initialized VideoSearchTool with config: {config}")
 
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
-        """Return the OpenAI tool schema."""
-        return self.tool_schema
+        """Return the OpenAI tool schema.
+
+        Ensures the schema supports either a language query or a subtitle string.
+        """
+        if self.tool_schema and isinstance(self.tool_schema, dict):
+            # Ensure oneOf is present; if not, augment minimally
+            fn = self.tool_schema.get("function", {})
+            params = fn.get("parameters", {})
+            if "oneOf" not in params:
+                params["oneOf"] = [
+                    {"required": ["query"]},
+                    {"required": ["subtitle"]},
+                ]
+                fn["parameters"] = params
+                self.tool_schema["function"] = fn
+            return self.tool_schema
+
+        # Default schema if none provided
+        return {
+            "type": "function",
+            "function": {
+                "name": "video_search",
+                "description": (
+                    "Search relevant video frames using either a natural language query or by matching subtitle text."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Natural language description of what to find. Use when not searching subtitles.",
+                        },
+                        "subtitle": {
+                            "type": "string",
+                            "description": "Exact or fuzzy subtitle text to locate. Use when not using a language query.",
+                        },
+                    },
+                    "oneOf": [
+                        {"required": ["query"]},
+                        {"required": ["subtitle"]},
+                    ],
+                },
+            },
+        }
+       
 
     async def create(self, instance_id: Optional[str] = None, **kwargs) -> tuple[str, ToolResponse]:
         """Create a tool instance.
@@ -114,7 +185,7 @@ class VideoSearchTool(BaseTool):
         }
         return instance_id, ToolResponse()
 
-    async def _search_video_frames(self, query: str, topk: int = 5) -> tuple[List[int], Dict[str, Any]]:
+    async def _search_video_frames(self, query: str, topk: int = 5, video_id: Optional[str] = None, search_type: str = "video_frames") -> Tuple[List[Any], List[int], Dict[str, Any]]:
         """Search for relevant video frames using background server.
 
         Args:
@@ -127,89 +198,36 @@ class VideoSearchTool(BaseTool):
         try:
             # Prepare request payload
             payload = {
-                "query": query,
-                "topk": topk,
-                "search_type": "video_frames"
+                    "query": query,
+                    "topk": topk,
+                    "search_type": search_type,
+                    "video_id": video_id
             }
-
             # Make async HTTP request to background server
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
-                async with session.post(
-                    f"{self.server_url}/search",
-                    json=payload,
-                    headers={"Content-Type": "application/json"}
-                ) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        frame_indices = result.get("frame_indices", [])
-                        metadata = result.get("metadata", {})
-                        return frame_indices, metadata
-                    else:
-                        error_msg = f"Server returned status {response.status}: {await response.text()}"
-                        logger.error(f"Video search failed: {error_msg}")
-                        return [], {"error": error_msg, "status": "error"}
+            if search_type == "video_frames":
+                resp = requests.get(f"{self.server_url}/search", params=payload, timeout=self.timeout)
+                resp.raise_for_status()
+                data = resp.json()
+                frame_indices = sorted(data.get("frame_indices", []))
+            else:
+                resp = requests.get(f"{self.server_url}/search_subtitle", params=payload, timeout=self.timeout)
+                resp.raise_for_status()
+                data = resp.json()
+                frame_indices = sorted(data.get("subtitle_indices", []))
 
-        except asyncio.TimeoutError:
-            error_msg = f"Request timeout after {self.timeout} seconds"
-            logger.error(f"Video search timeout: {error_msg}")
-            return [], {"error": error_msg, "status": "timeout"}
-        except aiohttp.ClientError as e:
-            error_msg = f"Client error: {str(e)}"
-            logger.error(f"Video search client error: {error_msg}")
-            return [], {"error": error_msg, "status": "client_error"}
-        except Exception as e:
-            error_msg = f"Unexpected error: {str(e)}"
-            logger.error(f"Video search unexpected error: {error_msg}")
-            return [], {"error": error_msg, "status": "error"}
-
-    async def _search_with_embeddings(self, query: str, embeddings: List[torch.Tensor], topk: int = 5) -> List[int]:
-        """Search for relevant video frames using ViClip embeddings.
-
-        Args:
-            query: Text query describing what to search for
-            embeddings: List of visual embeddings (tensors)
-            topk: Number of top results to return
-
-        Returns:
-            List of frame indices sorted by similarity (highest first)
-        """
-        try:
-            # Get text embedding for the search query
-            text_embedding = self.viclip.get_text_embedding(query)
-
-            # Get the device of the text embedding (likely GPU)
-            device = text_embedding.device
-
-            # Ensure text embedding is 1D [embedding_dim]
-            if text_embedding.dim() > 1:
-                text_embedding = text_embedding.squeeze()
-
-            # Stack all visual embeddings into a single tensor
-            # Move to same device as text embedding and normalize
-            visual_embeddings = []
-            for emb in embeddings:
-                emb_device = emb.to(device)  # Move to same device as text embedding
-                # Ensure embedding is 1D
-                if emb_device.dim() > 1:
-                    emb_device = emb_device.squeeze()
-                emb_norm = emb_device / emb_device.norm(dim=-1, keepdim=True)
-                visual_embeddings.append(emb_norm)
-
-            visual_embeddings_tensor = torch.stack(visual_embeddings)  # Shape: [N, embedding_dim]
-
-            # Compute cosine similarities on GPU
-            # text_embedding is already normalized from get_text_embedding
-            # visual_embeddings_tensor: [N, D], text_embedding: [D] -> similarities: [N]
-            similarities = torch.matmul(visual_embeddings_tensor, text_embedding)
-
-            # Get indices sorted by similarity (descending order)
-            sorted_indices = torch.argsort(similarities, descending=True)
-
-            return sorted_indices.cpu().tolist()[:topk]
+            vid = data.get("video_id") or video_id
+            frames = [self.frames_dict[vid].get_frame_chunk(i) for i in frame_indices] if vid in self.frames_dict else []
+            metadata = data.get("metadata", {})
+            metadata.setdefault("search_mode", "subtitle" if search_type != "video_frames" else "language")
+            return frames, frame_indices, metadata
 
         except Exception as e:
-            logger.error(f"Embedding search failed: {str(e)}")
-            return []
+            logger.exception("_search_video_frames failed: %s", e)
+            return [], [], {"status": "error", "error": str(e), "search_mode": search_type}
+
+    async def _search_subtitles(self, subtitle: str, topk: int = 5, video_id: Optional[str] = None, search_type: str = "subtitles") -> Tuple[List[Any], List[int], Dict[str, Any]]:
+        """Search for frame indices by subtitle text."""
+        return await self._search_video_frames(subtitle, topk=topk, video_id=video_id, search_type=search_type)
 
     @rollout_trace_op
     async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> tuple[ToolResponse, float, dict]:
@@ -225,31 +243,35 @@ class VideoSearchTool(BaseTool):
             tool_metrics: The metrics of the tool
         """
         query = parameters.get("query")
-        topk = parameters.get("topk", self.topk)
+        subtitle = parameters.get("subtitle")
+        if not query and not subtitle:
+            error_msg = "Error: 'query' or 'subtitle' is missing in parameters."
+            logger.error(f"[VideoSearchTool] {error_msg} Received parameters: {parameters}")
+            return ToolResponse(text=json.dumps({"error": error_msg})), 0.0, {}
+        if query and subtitle:
+            error_msg = "Error: 'query' and 'subtitle' cannot be provided together."
+            logger.error(f"[VideoSearchTool] {error_msg} Received parameters: {parameters}")
+            return ToolResponse(text=json.dumps({"error": error_msg})), 0.0, {}
+        search_type = "video_frames" if query else "subtitles"
+        # Maybe needs to be passed through kwargs
+        topk = kwargs.get("topk")
+        video_id = kwargs.get("video_id")
 
-        if not query or not isinstance(query, str):
-            error_msg = "Error: 'query' is missing or not a string in parameters."
+        if query is not None and not isinstance(query, str):
+            error_msg = "Error: 'query' must be a string."
+            logger.error(f"[VideoSearchTool] {error_msg} Received parameters: {parameters}")
+            return ToolResponse(text=json.dumps({"error": error_msg})), 0.0, {}
+        if subtitle is not None and not isinstance(subtitle, str):
+            error_msg = "Error: 'subtitle' must be a string."
             logger.error(f"[VideoSearchTool] {error_msg} Received parameters: {parameters}")
             return ToolResponse(text=json.dumps({"error": error_msg})), 0.0, {}
 
         try:
-            # Check if embeddings are provided for local search
-            embeddings = kwargs.get("embeddings")
             
-            if embeddings:
-                # Use local embedding search
-                frame_indices = await self._search_with_embeddings(query, embeddings, topk)
-                metadata = {
-                    "search_type": "local_embeddings",
-                    "query": query,
-                    "topk": topk,
-                    "num_results": len(frame_indices),
-                    "status": "success"
-                }
+            if search_type == "video_frames":
+                frames, frame_indices, metadata = await self._search_video_frames(query or "", topk, video_id, search_type)
             else:
-                # Use background server search
-                frame_indices, metadata = await self._search_video_frames(query, topk)
-
+                frames, frame_indices, metadata = await self._search_subtitles(subtitle or "", topk, video_id, search_type)
             # Store results in instance dictionary
             self._instance_dict[instance_id]["search_results"].append({
                 "query": query,
@@ -259,22 +281,23 @@ class VideoSearchTool(BaseTool):
 
             # Prepare response
             response_data = {
+                "mode": "language" if search_type == "video_frames" else "subtitle",
                 "query": query,
+                "subtitle": subtitle,
                 "frame_indices": frame_indices,
                 "topk": topk,
-                "metadata": metadata
+                "metadata": metadata,
             }
 
             # Convert metadata to metrics
             metrics = {
-                "query": query,
+                "mode": response_data["mode"],
                 "num_results": len(frame_indices),
-                "search_type": metadata.get("search_type", "background_server"),
                 "status": metadata.get("status", "success"),
-                "error": metadata.get("error")
+                "error": metadata.get("error"),
             }
 
-            return ToolResponse(text=json.dumps(response_data)), 0.0, metrics
+            return ToolResponse(image_data=frames, text=json.dumps(response_data)), 0.0, metrics
 
         except Exception as e:
             error_result = json.dumps({"error": f"Video search execution failed: {e}"})
@@ -283,6 +306,7 @@ class VideoSearchTool(BaseTool):
 
     async def calc_reward(self, instance_id: str, **kwargs) -> str:
         """Calculate reward based on search results quality."""
+        return 0.0
         if instance_id in self._instance_dict:
             search_results = self._instance_dict[instance_id]["search_results"]
             if search_results:
