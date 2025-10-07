@@ -2,7 +2,7 @@
 retriever:
   port: 9000
   server_url: "http://127.0.0.1:${retriever.port}"
-  index_path: "/nas/mars/dataset/vseek/dataset"
+  index_path: "/home/hg22723/vseek/dataset"
   topk: 1
   retriever_name: "ViClip"
   retriever_model: "ViClip"
@@ -11,7 +11,7 @@ retriever:
   gpu_number: 0
   faiss_gpu: false
   dataset_name: "lvb"
-  window_size: 16
+  window_size: 8
   desired_interval_in_sec: 1
 llm:
   port: 8002

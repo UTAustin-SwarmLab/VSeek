@@ -22,7 +22,7 @@ import torch
 from typing import Any, Optional, List, Dict, Tuple
 from uuid import uuid4
 from pathlib import Path
-
+from omegaconf import DictConfig
 from verl.tools.base_tool import BaseTool
 from verl.utils.rollout_trace import rollout_trace_op
 from verl.tools.schemas import OpenAIFunctionToolSchema, ToolResponse
@@ -61,31 +61,21 @@ class VideoSearchTool(BaseTool):
             tool_schema: OpenAI function tool schema definition
 
         Example tool_schema:
-            {
-                "type": "function",
-                "function": {
-                    "name": "video_search",
-                    "description": "Searches for relevant video frames based on the text or subtitle text queries.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Text query describing what to search for in the video"
-                            },
-                            "subtitle": {
-                                "type": "string",
-                                "description": "Subtitle text that you want to search for in the video"
-                            },
-                            
-                        },
-                        "oneOf": [
-                            {"required": ["query"]},
-                            {"required": ["subtitle"]}
-                        ],
-                    }
-                }
-            }
+            type: function
+            function:
+                name: video_search
+                description: Searches video frames by natural language or subtitle string.
+                parameters:
+                type: object
+                properties:
+                    query:
+                    type: string
+                    description: Text to search. Used for both modes.
+                    mode:
+                    type: string
+                    enum: [base, subtitle]
+                    description: base for natural language search, subtitle to match subtitles.
+                required: [query, mode]
         """
         super().__init__(config, tool_schema)
         self._instance_dict = {}
@@ -97,74 +87,38 @@ class VideoSearchTool(BaseTool):
         self.dataset_name = config.get("dataset_name", "lvb")
         self.window_size = config.get("window_size", 4)
         self.index_path = config.get("index_path", "data/index")
-        
+        self.cache_limit = config.get("cache_limit", 64)
         # Initialize all the frames as per the dataset
         
         dir_name = f"{self.dataset_name}_window_{self.window_size}"
-        data_root = Path(self.index_path).joinpath(dir_name)
+        print(f"dir_name: {dir_name}")
+        self.data_root = Path(self.index_path).joinpath(dir_name)
         
         if self.dataset_name == "lvb":
-            dataset = LongVideoBench(config)
+            # convert to dict to DictConfig
+            dataset_config = DictConfig(config)
+            dataset = LongVideoBench(dataset_config)
             self.entries = dataset.load_data()
         else:
             raise ValueError(f"Unsupported dataset: {self.dataset_name}")
         
-        logger.info(f"Loading video index from: {data_root}")
-        self.frames_dict = {
-            entry["metadata"]["video_id"]: VideoFrames.load(str(data_root.joinpath(entry["metadata"]["video_id"])))
-            for entry in self.entries
+        logger.info(f"Loading video index from: {self.data_root}")
+        self.cached_frames_dict = {
+            # entry["metadata"]["video_id"]: VideoFrames.load(str(data_root.joinpath(entry["metadata"]["video_id"])))
+            # for entry in self.entries
         }
+        self.cached_ids = []
         
         # ViClip model for text embeddings
-
+        #print(f"Initialized VideoSearchTool with config: {config}")
         logger.info(f"Initialized VideoSearchTool with config: {config}")
 
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         """Return the OpenAI tool schema.
+        Ensures the schema requires a query and a mode ("base" or "subtitle").
+        """       
+        return self.tool_schema
 
-        Ensures the schema supports either a language query or a subtitle string.
-        """
-        if self.tool_schema and isinstance(self.tool_schema, dict):
-            # Ensure oneOf is present; if not, augment minimally
-            fn = self.tool_schema.get("function", {})
-            params = fn.get("parameters", {})
-            if "oneOf" not in params:
-                params["oneOf"] = [
-                    {"required": ["query"]},
-                    {"required": ["subtitle"]},
-                ]
-                fn["parameters"] = params
-                self.tool_schema["function"] = fn
-            return self.tool_schema
-
-        # Default schema if none provided
-        return {
-            "type": "function",
-            "function": {
-                "name": "video_search",
-                "description": (
-                    "Search relevant video frames using either a natural language query or by matching subtitle text."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Natural language description of what to find. Use when not searching subtitles.",
-                        },
-                        "subtitle": {
-                            "type": "string",
-                            "description": "Exact or fuzzy subtitle text to locate. Use when not using a language query.",
-                        },
-                    },
-                    "oneOf": [
-                        {"required": ["query"]},
-                        {"required": ["subtitle"]},
-                    ],
-                },
-            },
-        }
-       
 
     async def create(self, instance_id: Optional[str] = None, **kwargs) -> tuple[str, ToolResponse]:
         """Create a tool instance.
@@ -196,6 +150,12 @@ class VideoSearchTool(BaseTool):
             Tuple of (frame_indices, metadata)
         """
         try:
+            if video_id not in self.cached_frames_dict:
+                self.cached_frames_dict[video_id] = VideoFrames.load(str(self.data_root.joinpath(video_id)))
+                self.cached_ids.append(video_id)
+                if len(self.cached_ids) > self.cache_limit:
+                    pop_id = self.cached_ids.pop(0)
+                    del self.cached_frames_dict[pop_id]
             # Prepare request payload
             payload = {
                     "query": query,
@@ -203,6 +163,7 @@ class VideoSearchTool(BaseTool):
                     "search_type": search_type,
                     "video_id": video_id
             }
+            print(f"payload: {payload}")
             # Make async HTTP request to background server
             if search_type == "video_frames":
                 resp = requests.get(f"{self.server_url}/search", params=payload, timeout=self.timeout)
@@ -216,7 +177,7 @@ class VideoSearchTool(BaseTool):
                 frame_indices = sorted(data.get("subtitle_indices", []))
 
             vid = data.get("video_id") or video_id
-            frames = [self.frames_dict[vid].get_frame_chunk(i) for i in frame_indices] if vid in self.frames_dict else []
+            frames = [self.cached_frames_dict[vid].get_frame_chunk(i) for i in frame_indices] if vid in self.cached_frames_dict else []
             metadata = data.get("metadata", {})
             metadata.setdefault("search_mode", "subtitle" if search_type != "video_frames" else "language")
             return frames, frame_indices, metadata
@@ -242,36 +203,49 @@ class VideoSearchTool(BaseTool):
             tool_reward_score: The step reward score of the tool
             tool_metrics: The metrics of the tool
         """
+        # Inputs
         query = parameters.get("query")
-        subtitle = parameters.get("subtitle")
-        if not query and not subtitle:
-            error_msg = "Error: 'query' or 'subtitle' is missing in parameters."
+        mode = parameters.get("mode") or parameters.get("type") or parameters.get("search_type")
+
+        # Backward compatibility: if subtitle provided and query missing, use it as query with subtitle mode
+        if query is None and subtitle_legacy is not None:
+            query = subtitle_legacy
+            if not mode:
+                mode = "subtitle"
+
+        if not isinstance(query, str) or not query:
+            error_msg = "Error: 'query' must be a non-empty string."
             logger.error(f"[VideoSearchTool] {error_msg} Received parameters: {parameters}")
             return ToolResponse(text=json.dumps({"error": error_msg})), 0.0, {}
-        if query and subtitle:
-            error_msg = "Error: 'query' and 'subtitle' cannot be provided together."
+
+        if not isinstance(mode, str) or mode not in {"base", "subtitle"}:
+            error_msg = "Error: 'mode' must be 'base' or 'subtitle'."
             logger.error(f"[VideoSearchTool] {error_msg} Received parameters: {parameters}")
             return ToolResponse(text=json.dumps({"error": error_msg})), 0.0, {}
-        search_type = "video_frames" if query else "subtitles"
+
+        search_type = "video_frames" if mode == "base" else "subtitles"
         # Maybe needs to be passed through kwargs
         topk = kwargs.get("topk")
         video_id = kwargs.get("video_id")
+        
+        print(f"query: {query}, mode: {mode}, topk: {topk}, video_id: {video_id}")
 
-        if query is not None and not isinstance(query, str):
-            error_msg = "Error: 'query' must be a string."
-            logger.error(f"[VideoSearchTool] {error_msg} Received parameters: {parameters}")
-            return ToolResponse(text=json.dumps({"error": error_msg})), 0.0, {}
-        if subtitle is not None and not isinstance(subtitle, str):
-            error_msg = "Error: 'subtitle' must be a string."
-            logger.error(f"[VideoSearchTool] {error_msg} Received parameters: {parameters}")
-            return ToolResponse(text=json.dumps({"error": error_msg})), 0.0, {}
+        # type checks done above
 
         try:
             
             if search_type == "video_frames":
-                frames, frame_indices, metadata = await self._search_video_frames(query or "", topk, video_id, search_type)
+                frames, frame_indices, metadata = await self._search_video_frames(
+                    query=query, 
+                    topk=topk,
+                    video_id=video_id,
+                    search_type=search_type)
             else:
-                frames, frame_indices, metadata = await self._search_subtitles(subtitle or "", topk, video_id, search_type)
+                frames, frame_indices, metadata = await self._search_subtitles(
+                    subtitle=query, 
+                    topk=topk, 
+                    video_id=video_id, 
+                    search_type=search_type)
             # Store results in instance dictionary
             self._instance_dict[instance_id]["search_results"].append({
                 "query": query,
@@ -281,9 +255,8 @@ class VideoSearchTool(BaseTool):
 
             # Prepare response
             response_data = {
-                "mode": "language" if search_type == "video_frames" else "subtitle",
+                "mode": "base" if search_type == "video_frames" else "subtitle",
                 "query": query,
-                "subtitle": subtitle,
                 "frame_indices": frame_indices,
                 "topk": topk,
                 "metadata": metadata,
@@ -297,7 +270,7 @@ class VideoSearchTool(BaseTool):
                 "error": metadata.get("error"),
             }
 
-            return ToolResponse(image_data=frames, text=json.dumps(response_data)), 0.0, metrics
+            return ToolResponse(image=frames, text=json.dumps(response_data)), 0.0, metrics
 
         except Exception as e:
             error_result = json.dumps({"error": f"Video search execution failed: {e}"})
