@@ -28,7 +28,8 @@ from verl.utils.rollout_trace import rollout_trace_op
 from verl.tools.schemas import OpenAIFunctionToolSchema, ToolResponse
 from vseek.data.frame import VideoFrames
 from data.lvb import LongVideoBench
-
+import cv2
+import base64
 from vseek.video_embedding.video_clip import ViClip
 from vseek.setting import ViClipSetting
 
@@ -91,7 +92,7 @@ class VideoSearchTool(BaseTool):
         # Initialize all the frames as per the dataset
         
         dir_name = f"{self.dataset_name}_window_{self.window_size}"
-        print(f"dir_name: {dir_name}")
+        #print(f"dir_name: {dir_name}")
         self.data_root = Path(self.index_path).joinpath(dir_name)
         
         if self.dataset_name == "lvb":
@@ -139,7 +140,12 @@ class VideoSearchTool(BaseTool):
         }
         return instance_id, ToolResponse()
 
-    async def _search_video_frames(self, query: str, topk: int = 5, video_id: Optional[str] = None, search_type: str = "video_frames") -> Tuple[List[Any], List[int], Dict[str, Any]]:
+    async def _search_video_frames(
+        self, query: str,
+        topk: int = 5, 
+        video_id: Optional[str] = None,
+        search_type: str = "video_frames",
+        precomputed_frames: Optional[List[Dict[str, List[str]]]] = None) -> Tuple[List[Any], List[int], Dict[str, Any]]:
         """Search for relevant video frames using background server.
 
         Args:
@@ -150,12 +156,13 @@ class VideoSearchTool(BaseTool):
             Tuple of (frame_indices, metadata)
         """
         try:
-            if video_id not in self.cached_frames_dict:
-                self.cached_frames_dict[video_id] = VideoFrames.load(str(self.data_root.joinpath(video_id)))
-                self.cached_ids.append(video_id)
-                if len(self.cached_ids) > self.cache_limit:
-                    pop_id = self.cached_ids.pop(0)
-                    del self.cached_frames_dict[pop_id]
+            if precomputed_frames is None:
+                if video_id not in self.cached_frames_dict:
+                    self.cached_frames_dict[video_id] = VideoFrames.load(str(self.data_root.joinpath(video_id)))
+                    self.cached_ids.append(video_id)
+                    if len(self.cached_ids) > self.cache_limit:
+                        pop_id = self.cached_ids.pop(0)
+                        del self.cached_frames_dict[pop_id]
             # Prepare request payload
             payload = {
                     "query": query,
@@ -163,7 +170,7 @@ class VideoSearchTool(BaseTool):
                     "search_type": search_type,
                     "video_id": video_id
             }
-            print(f"payload: {payload}")
+            #print(f"payload: {payload}")
             # Make async HTTP request to background server
             if search_type == "video_frames":
                 resp = requests.get(f"{self.server_url}/search", params=payload, timeout=self.timeout)
@@ -176,8 +183,22 @@ class VideoSearchTool(BaseTool):
                 data = resp.json()
                 frame_indices = sorted(data.get("subtitle_indices", []))
 
+            print(f"frame_indices: {frame_indices}")
             vid = data.get("video_id") or video_id
-            frames = [self.cached_frames_dict[vid].get_frame_chunk(i) for i in frame_indices] if vid in self.cached_frames_dict else []
+            frames = []
+            remapped_precomputed_frames = {}
+            for frame in precomputed_frames:
+                remapped_precomputed_frames[frame["window_idx"]] = frame["encoded_frames"]
+                
+            if precomputed_frames is not None:
+                for i in frame_indices:
+                    frames += remapped_precomputed_frames.get(i, [])
+
+            else:
+                for i in frame_indices:
+                    frames += self.cached_frames_dict[vid].get_frame_chunk(i)
+                
+            # frames = [self.cached_frames_dict[vid].get_frame_chunk(i) for i in frame_indices] if vid in self.cached_frames_dict else []
             metadata = data.get("metadata", {})
             metadata.setdefault("search_mode", "subtitle" if search_type != "video_frames" else "language")
             return frames, frame_indices, metadata
@@ -186,10 +207,36 @@ class VideoSearchTool(BaseTool):
             logger.exception("_search_video_frames failed: %s", e)
             return [], [], {"status": "error", "error": str(e), "search_mode": search_type}
 
-    async def _search_subtitles(self, subtitle: str, topk: int = 5, video_id: Optional[str] = None, search_type: str = "subtitles") -> Tuple[List[Any], List[int], Dict[str, Any]]:
+    async def _search_subtitles(
+        self, 
+        subtitle: str,
+        topk: int = 5,
+        video_id: Optional[str] = None,
+        search_type: str = "subtitles",
+        precomputed_frames: Optional[Dict[str, List[str]]] = None,
+        ) -> Tuple[List[Any], List[int], Dict[str, Any]]:
         """Search for frame indices by subtitle text."""
-        return await self._search_video_frames(subtitle, topk=topk, video_id=video_id, search_type=search_type)
+        return await self._search_video_frames(subtitle, topk=topk, video_id=video_id, search_type=search_type, precomputed_frames=precomputed_frames)
 
+    async def _encode_frame(self, frame, max_width=256, max_height=256, quality=85):
+        # Resize frame to reduce aspect ratio and make it easier to parse
+        height, width = frame.shape[:2]
+        # Calculate scaling factor to fit within max dimensions while maintaining aspect ratio
+        scale = min(max_width / width, max_height / height)
+        
+        # Only resize if the image is larger than max dimensions
+        if scale < 1.0:
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+        
+        # Encode a uint8 numpy array (image) as a JPEG and then base64 encode it.
+        encode_params = [cv2.IMWRITE_JPEG_QUALITY, quality]
+        ret, buffer = cv2.imencode(".jpg", frame, encode_params)
+        if not ret:
+            raise ValueError("Could not encode frame")
+        return base64.b64encode(buffer).decode("utf-8")
+    
     @rollout_trace_op
     async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> tuple[ToolResponse, float, dict]:
         """Execute the video search tool.
@@ -227,8 +274,12 @@ class VideoSearchTool(BaseTool):
         # Maybe needs to be passed through kwargs
         topk = kwargs.get("topk")
         video_id = kwargs.get("video_id")
+        precomputed_frames = kwargs.get("precomputed_frames")
         
-        print(f"query: {query}, mode: {mode}, topk: {topk}, video_id: {video_id}")
+        if precomputed_frames is not None:
+            print(f"Will be using precomputed frames: {len(precomputed_frames)}")
+            print("Total frames: ", sum(len(frame["encoded_frames"]) for frame in precomputed_frames))
+        #print(f"query: {query}, mode: {mode}, topk: {topk}, video_id: {video_id}")
 
         # type checks done above
 
@@ -239,13 +290,17 @@ class VideoSearchTool(BaseTool):
                     query=query, 
                     topk=topk,
                     video_id=video_id,
-                    search_type=search_type)
+                    search_type=search_type,
+                    precomputed_frames=precomputed_frames
+                )
             else:
                 frames, frame_indices, metadata = await self._search_subtitles(
                     subtitle=query, 
                     topk=topk, 
                     video_id=video_id, 
-                    search_type=search_type)
+                    search_type=search_type,    
+                    precomputed_frames=precomputed_frames
+                )
             # Store results in instance dictionary
             self._instance_dict[instance_id]["search_results"].append({
                 "query": query,
@@ -269,8 +324,11 @@ class VideoSearchTool(BaseTool):
                 "status": metadata.get("status", "success"),
                 "error": metadata.get("error"),
             }
+            # If precomputed frames were passed, they are already base64 strings; otherwise encode
+            if precomputed_frames is None:
+                frames = [await self._encode_frame(frame) for frame in frames]
 
-            return ToolResponse(image=frames, text=json.dumps(response_data)), 0.0, metrics
+            return ToolResponse(image=frames), 0.0, metrics
 
         except Exception as e:
             error_result = json.dumps({"error": f"Video search execution failed: {e}"})
