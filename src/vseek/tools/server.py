@@ -277,11 +277,12 @@ class VideoSearchServer:
             for index in sorted_indices:
                 closest_subtitle = subtitle_embeddings_keys[index]
                 closest_subtitles.append(closest_subtitle)
-                windows_retrieved.append(self.video_subtitles[video_id][closest_subtitle])
-                total_windows_retrieved += len(self.video_subtitles[video_id][closest_subtitle])
+                windows_retrieved += self.video_subtitles[video_id][closest_subtitle]
+                windows_retrieved = list(set(windows_retrieved))
+                total_windows_retrieved = len(windows_retrieved)
                 if total_windows_retrieved >= topk:
                     break
-            windows_retrieved = [a for b in windows_retrieved for a in b]
+            windows_retrieved = [b//self.window_size for b in windows_retrieved]
 
             # Return top-k results
             
