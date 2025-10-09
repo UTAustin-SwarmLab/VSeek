@@ -14,6 +14,9 @@ from omegaconf import OmegaConf, DictConfig
 
 from verl.utils.hdfs_io import copy, makedirs
 from data.lvb import LongVideoBench
+from vseek.data.frame import VideoFrames
+import cv2
+import base64
 
 
 def build_prompt(entry: dict) -> list[dict]:
@@ -30,31 +33,15 @@ def build_prompt(entry: dict) -> list[dict]:
     }
     question_text = f"Question: {question_text} \n"
     user_content = (
-        "\n\nUse tools to search for scenes in the video to answer the multiple choice question and decide the correct option."+
         question_text +
         "\nOptions: \n" +
         options_block
-
     )
 
     messages = [
         {
             "role": "system",
-            "content": (
-                "You are a video analysis assistant that would answer the user's question with access to a tool-based retrieval system to retrieve the relevant frames of interest from a video. \n"
-                "INSTRUCTIONS:\n"
-                "1) Read the user's question carefully and the options provided. You will not be able to answer the question directly. You need to use the tool-based retrieval system to retrieve the relevant frames of interest from the video.\n"
-                "2) At each step, based on the frames obtained so far, decide whether you can answer directly. If you don't have any frames, you must use the search tool.\n"
-                "3) Think inside <think> and </think>. If more information is needed, call the search tool using <tool_call> and </tool_call>.\n"
-                "4) Tool usage (JSON inside <tool_call>): {\"name\": \"video_search\", \"arguments\": { ... }}\n"
-                "   - Use exactly one argument per call: either \"query\" (language search) OR \"subtitle\" (subtitle match).\n"
-                "   Example (language): <tool_call>\n{\"name\": \"video_search\", \"arguments\": {\"query\": \"a chef with a large mixing bowl\", \"mode\": \"base\"}}\n</tool_call>\n"
-                "   Example (subtitle): <tool_call>\n{\"name\": \"video_search\", \"arguments\": {\"query\": \"you're interested in.\", \"mode\": \"subtitle\"}}\n</tool_call>\n"
-                "5) If you can answer, provide only the option number inside <answer> and </answer>.\n"
-                "6) Output exactly ONE non-empty field from (<answer> or <tool_call>) per turn, plus a non-empty <think>.\n"
-                "7) Options are numbered 0..N-1; answer with only a single number.\n"
-                "\nEXAMPLES:\n"
-                "EXAMPLE 1 (Language search):\n"
+            "
                 "Turn 1:\n"
                 "<think>I should first locate where the chef uses a mixing bowl.</think>\n"
                 "<tool_call>\n{\"name\": \"video_search\", \"arguments\": {\"query\": \"a chef with a large mixing bowl\", \"mode\": \"base\"}}\n</tool_call>\n"
@@ -93,6 +80,11 @@ if __name__ == "__main__":
     parser.add_argument("--train_ratio", type=float, default=0.9, help="Train split ratio (0-1).")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for splitting.")
     parser.add_argument("--burned_path", required=True, help="Root path to LVB burned data directory.")
+    parser.add_argument("--index_path", default=None, help="Root path to precomputed VideoFrames index.")
+    parser.add_argument("--window_size", type=int, default=8, help="Window size used in VideoFrames index.")
+    parser.add_argument("--embed_frames", action="store_true", help="Embed base64 frames per window into parquet rows.")
+    parser.add_argument("--thumb_max_side", type=int, default=256, help="Max side for thumbnail resize.")
+    parser.add_argument("--thumb_quality", type=int, default=85, help="JPEG quality for thumbnails (1-100).")
     args = parser.parse_args()
 
     local_dataset_path = args.local_dataset_path
@@ -115,7 +107,25 @@ if __name__ == "__main__":
 
     processed_rows: list[dict] = []
     data_source = "lvb"
-    for idx, entry in tqdm(enumerate(raw_entries)):
+    
+    def _encode_frame(frame, max_side: int, quality: int) -> str:
+        height, width = frame.shape[:2]
+        scale = max_side / max(height, width) if max(height, width) > max_side else 1.0
+        if scale < 1.0:
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+        encode_params = [cv2.IMWRITE_JPEG_QUALITY, int(quality)]
+        ret, buffer = cv2.imencode(".jpg", frame, encode_params)
+        if not ret:
+            raise ValueError("Could not encode frame")
+        return base64.b64encode(buffer).decode("utf-8")
+
+    data_root = None
+    if args.embed_frames and args.index_path is not None:
+        dir_name = f"lvb_window_{args.window_size}"
+        data_root = os.path.join(args.index_path, dir_name)
+    for idx, entry in tqdm(enumerate(raw_entries), desc="Processing LVB entries"):
         messages = build_prompt(entry)
         correct_choice = entry.get("correct_choice", None)
         row = {
@@ -146,6 +156,27 @@ if __name__ == "__main__":
                 },
             },
         }
+        # Optionally embed precomputed frames per window for this video
+        print(f"data_root: {data_root}")
+        if data_root is not None:
+            try:
+                video_id = entry.get("metadata", {}).get("video_id")
+                vf_path = os.path.join(data_root, str(video_id))
+                video_frames = VideoFrames.load(vf_path)
+                frames_by_window = []
+                for window_idx in video_frames.frames_by_window.keys():
+                    chunk = video_frames.get_frame_chunk(window_idx)
+                    encoded = [_encode_frame(f, args.thumb_max_side, args.thumb_quality) for f in chunk]
+                    frames_by_window.append({"window_idx": window_idx, "encoded_frames": encoded})
+
+                row["extra_info"].setdefault("precomputed_frames", [])
+                row["extra_info"]["precomputed_frames"] = frames_by_window
+                
+                row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["precomputed_frames"] = frames_by_window
+                # Ensure Arrow-friendly keys
+            except Exception:
+                pass
+
         processed_rows.append(row)
 
     # Train/test split
@@ -167,8 +198,8 @@ if __name__ == "__main__":
     train_ds = datasets.Dataset.from_list(train_rows)
     test_ds = datasets.Dataset.from_list(test_rows) if test_rows else datasets.Dataset.from_list([])
 
-    train_path = os.path.join(local_save_dir, "train.parquet")
-    test_path = os.path.join(local_save_dir, "test.parquet")
+    train_path = os.path.join(local_save_dir, f"window_{args.window_size}", f"train.parquet")
+    test_path = os.path.join(local_save_dir, f"window_{args.window_size}", f"test.parquet")
 
     train_ds.to_parquet(train_path)
     test_ds.to_parquet(test_path)
