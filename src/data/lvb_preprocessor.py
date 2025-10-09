@@ -51,6 +51,7 @@ def build_prompt(entry: dict) -> list[dict]:
                 "   - If the answer is NO, output <tool_call>...</tool_call>. You can call the tool upto 3 times every turn. However, you will obtain a fixed number of frames per turn.\n"
                 "   - If the answer is YES, output exactly one <answer>...</answer>.\n"
                 "4) Final Check: Your output must contain the <think> block and EXACTLY ONE action block (<tool_call> OR <answer>).\n\n"
+                "5) Once you answer the question, the trajectory ends.\n\n"
                 "Tool Call Specification:\n"
                 "- Use JSON strictly inside <tool_call>...</tool_call> with this shape:\n"
                 "  {\"name\": \"video_search\", \"arguments\": {\"query\": <string>, \"mode\": \"base\"|\"subtitle\"}}\n"
