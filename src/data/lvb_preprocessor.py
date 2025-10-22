@@ -18,8 +18,8 @@ from vseek.data.frame import VideoFrames
 import cv2
 import base64
 
-
-def build_prompt(entry: dict) -> list[dict]:
+from data.prompts import tagbased, openaitooluse
+def build_prompt(args, entry: dict) -> list[dict]:
     question_text: str = entry["question"].strip()
     candidates: list[str] = entry.get("candidates", [])
     paths: dict = entry.get("paths", {})
@@ -33,74 +33,14 @@ def build_prompt(entry: dict) -> list[dict]:
     }
     question_text = f"Question: {question_text} \n"
     user_content = "Answer the following multiple choice question: \n" + question_text + "\nOptions: \n" + options_block
-    system_prompt = """
-            You are a video analysis assistant that would aim to answer the user's question over multiple turns. 
-            You will not have access to the complete video. 
-            You will have access to a tool-based retrieval system to retrieve the relevant frames of interest from a video. 
-                       
-            **INSTRUCTIONS**:
-            Follow these instructions precisely on every turn.
-         
-            1) Reason: Write your step-by-step reasoning inside <think>...</think>.
-            2) Decide: Based on your reasoning, decide if you have enough information in the frames obtained so far to answer.
-            3) Act (Choose ONE):
-               - If the answer is NO, output <tool_call>...</tool_call>. You can call the tool upto 3 times every turn. However, you will obtain a fixed number of frames per turn.
-               - If the answer is YES, output exactly one <answer>...</answer>.
-            4) Final Check: Your output must contain the <think> block and EXACTLY ONE action block (<tool_call> OR <answer>).
-            5) Once you answer the question, the trajectory ends.
-            
-            **Tool Call Specification**"
-            - Use JSON strictly inside <tool_call>...</tool_call> with exactly this shape:"
-               \"name\": \"video_search\", \"arguments\": {\"query\": <string>, \"mode\": \"base\"|\"subtitle\"}}
-            - Choose mode=\"base\" for language based search or mode=\"subtitle\" for subtitle based match to retrieve the frames.
-            - Emit EXACTLY ONE <tool_call> per turn when you need more information; no extra text outside the tags.
-            
-            **Answer Specification**
-            - When you have enough information, output ONLY the option number inside <answer>...</answer>
-            - Options are numbered 0..N-1 as mentioned in the question. Do not include any words, just the number.
-            
-            **Behavioral Rules**
-            - Always include a non-empty <think> block.
-            - Output exactly one of <tool_call> or <answer> on each turn. Never both.
-            - If you lack frames/evidence, use <tool_call> to retrieve them before answering.
-            
-            **Examples: Here are some correct examples of how to use the tool and answer the question**
-            
-            EXAMPLE 1 (Language search):
-            
-            Turn 1:
-            <think>I should first locate where the chef uses a mixing bowl.</think>
-            <tool_call>\n{\"name\": \"video_search\", \"arguments\": {\"query\": \"a chef with a large mixing bowl\", \"mode\": \"base\"}}\n</tool_call>
-            
-            Turn 2:\n (After the first search, the agent receives frames of the chef placing an empty bowl on the counter.)
-            <think>I saw the bowl but no ingredient yet. I should fetch the next action of adding an ingredient.</think>
-            <tool_call>\n{\"name\": \"video_search\", \"arguments\": {\"query\": \"chef adding an ingredient to the bowl\", \"mode\": \"base\"}}\n</tool_call>
-            
-            Turn 3:\n (After the second search, the agent receives frames of the chef pouring flour into the bowl.)
-            <think>These frames show flour being added. I can answer now.</think>
-            <answer>3</answer>
-                
-            EXAMPLE 2 (Temporal reasoning with language search):
-            
-            Turn 1:
-            <think>I need to find when the person picks up the red ball.</think>
-            <tool_call>\n{\"name\": \"video_search\", \"arguments\": {\"query\": \"a person picking up a red ball\", \"mode\": \"base\"}}\n</tool_call>
-            
-            Turn 2:\n (After the first search, the agent receives frames of a person bending over and grabbing a red ball.)
-            <think>The immediate next action is throwing the ball to a dog. I can answer.</think>
-            <answer>1</answer>
-            
-            EXAMPLE 3 (Subtitle-guided search):
-            
-            Turn 1:
-            <think>I should locate the moment the subtitle 'you're interested in.' appears.</think>
-            <tool_call>\n{\"name\": \"video_search\", \"arguments\": {\"query\": \"you're interested in.\", \"mode\": \"subtitle\"}}\n</tool_call>
-            
-            Turn 2:\n (After the first search, the agent receives frames of a dark haired woman wearing a hat.)
-            <think>The frames around the subtitle disambiguate nearby objects. I can answer now.</think>
-            <answer>0</answer>
-        
-            """
+
+    if args.prompt_type == "tag":
+        system_prompt = tagbased.system_prompt
+    elif args.prompt_type == "openai":
+        system_prompt = openaitooluse.system_prompt
+    else:
+        raise ValueError(f"Invalid prompt type: {args.prompt_type}")
+    
     messages = [
         {
             "role": "system",
@@ -122,8 +62,9 @@ if __name__ == "__main__":
     parser.add_argument("--index_path", default=None, help="Root path to precomputed VideoFrames index.")
     parser.add_argument("--window_size", type=int, default=8, help="Window size used in VideoFrames index.")
     parser.add_argument("--embed_frames", action="store_true", help="Embed base64 frames per window into parquet rows.")
-    parser.add_argument("--thumb_max_side", type=int, default=256, help="Max side for thumbnail resize.")
+    parser.add_argument("--thumb_max_side", type=int, default=224, help="Max side for thumbnail resize.")
     parser.add_argument("--thumb_quality", type=int, default=85, help="JPEG quality for thumbnails (1-100).")
+    parser.add_argument("--prompt_type", type=str, default="tag", help="Prompt type: tagbased or openai.")
     args = parser.parse_args()
 
     local_dataset_path = args.local_dataset_path
@@ -164,8 +105,10 @@ if __name__ == "__main__":
     if args.embed_frames and args.index_path is not None:
         dir_name = f"lvb_window_{args.window_size}"
         data_root = os.path.join(args.index_path, dir_name)
+    else:
+        raise ValueError(f"Invalid index path or embed frames is not enabled: {args.index_path} or {args.embed_frames}")
     for idx, entry in tqdm(enumerate(raw_entries), desc="Processing LVB entries"):
-        messages = build_prompt(entry)
+        messages = build_prompt(args, entry)
         correct_choice = entry.get("correct_choice", None)
         row = {
             "data_source": data_source,
@@ -212,6 +155,7 @@ if __name__ == "__main__":
                 row["extra_info"]["precomputed_frames"] = frames_by_window
                 
                 row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["precomputed_frames"] = frames_by_window
+                print(f"Encoded {len(frames_by_window)} frames for video {video_id}")
                 # Ensure Arrow-friendly keys
             except Exception:
                 pass
@@ -237,8 +181,8 @@ if __name__ == "__main__":
     train_ds = datasets.Dataset.from_list(train_rows)
     test_ds = datasets.Dataset.from_list(test_rows) if test_rows else datasets.Dataset.from_list([])
 
-    train_path = os.path.join(local_save_dir, f"window_{args.window_size}", f"train.parquet")
-    test_path = os.path.join(local_save_dir, f"window_{args.window_size}", f"test.parquet")
+    train_path = os.path.join(local_save_dir, f"window_{args.window_size}", f"train_{args.prompt_type}.parquet")
+    test_path = os.path.join(local_save_dir, f"window_{args.window_size}", f"test_{args.prompt_type}.parquet")
 
     train_ds.to_parquet(train_path)
     test_ds.to_parquet(test_path)
