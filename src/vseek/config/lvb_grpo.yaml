@@ -1,0 +1,47 @@
+hydra:
+  searchpath:
+    - file://vendor/verl/verl/trainer/config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  max_prompt_length: 1024
+  max_response_length: 1024
+  train_batch_size: 256
+  return_raw_chat: True
+  shuffle: False
+
+actor_rollout_ref:
+  hybrid_engine: True
+  rollout:
+    name: vseek_sglang
+    multi_turn:
+      enable: True
+      max_assistant_turns: 3
+      format: qwen25
+      max_tool_response_length: 1024
+    max_num_batched_tokens: 32768
+    gpu_memory_utilization: 0.8
+    max_model_len: 16384
+    max_num_seqs: 4096
+    log_prob_micro_batch_size_per_gpu: 32
+    log_prob_use_dynamic_bsz: False
+    log_prob_max_token_len_per_gpu: 32768
+    disable_log_stats: False
+    multi_stage_wake_up: False
+    engine_kwargs:
+      vllm: {}
+      sglang: {}
+  actor:
+    strategy: fsdp2
+    use_dynamic_bsz: False
+    ppo_max_token_len_per_gpu: 32768
+    grad_clip: 1.0
+    clip_ratio: 0.30
+    entropy_coeff: 0.000
+    use_kl_loss: False
+custom_reward_function:
+  path: src/vseek/trainer/reward/vseekreward.py
+  name: compute_score

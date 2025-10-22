@@ -14,7 +14,7 @@ retriever:
   window_size: 8
   desired_interval_in_sec: 1
 llm:
-  port: 8002
+  port: 8001
   server_url: "http://127.0.0.1:${llm.port}/v1"
   model: "Qwen/Qwen2.5-VL-7B-Instruct"
   openai_api_key: "EMPTY"
@@ -22,7 +22,7 @@ inference:
   max_image_width: 256
   max_image_height: 256
   image_quality: 90
-  temperature: 0.5
+  temperature: 0.0
   topk: 1
   max_parse_attempts: 3
   max_reasoning_attempts: 5
