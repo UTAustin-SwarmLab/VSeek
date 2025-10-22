@@ -32,6 +32,7 @@ import cv2
 import base64
 from vseek.video_embedding.video_clip import ViClip
 from vseek.setting import ViClipSetting
+import numpy as np
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
@@ -89,6 +90,7 @@ class VideoSearchTool(BaseTool):
         self.window_size = config.get("window_size", 4)
         self.index_path = config.get("index_path", "data/index")
         self.cache_limit = config.get("cache_limit", 64)
+        self.max_frames_per_turn = config.get("max_frames_per_turn", 16)
         # Initialize all the frames as per the dataset
         
         dir_name = f"{self.dataset_name}_window_{self.window_size}"
@@ -183,7 +185,7 @@ class VideoSearchTool(BaseTool):
                 data = resp.json()
                 frame_indices = sorted(data.get("subtitle_indices", []))
 
-            print(f"frame_indices: {frame_indices}")
+            #print(f"frame_indices: {frame_indices}")
             vid = data.get("video_id") or video_id
             frames = []
             remapped_precomputed_frames = {}
@@ -201,6 +203,12 @@ class VideoSearchTool(BaseTool):
             # frames = [self.cached_frames_dict[vid].get_frame_chunk(i) for i in frame_indices] if vid in self.cached_frames_dict else []
             metadata = data.get("metadata", {})
             metadata.setdefault("search_mode", "subtitle" if search_type != "video_frames" else "language")
+            
+            # Uniformly sample the frames to the max_frames_per_turn from all frames
+            if len(frames) > self.max_frames_per_turn:
+                idxs = np.linspace(0, len(frames) - 1, self.max_frames_per_turn, dtype=int)
+                frames = [frames[i] for i in idxs]
+                # frame_indices = idxs
             return frames, frame_indices, metadata
 
         except Exception as e:
@@ -255,10 +263,10 @@ class VideoSearchTool(BaseTool):
         mode = parameters.get("mode") or parameters.get("type") or parameters.get("search_type")
 
         # Backward compatibility: if subtitle provided and query missing, use it as query with subtitle mode
-        if query is None and subtitle_legacy is not None:
-            query = subtitle_legacy
-            if not mode:
-                mode = "subtitle"
+        if query is None:
+            error_msg = "Error: 'query' must be a non-empty string."
+            logger.error(f"[VideoSearchTool] {error_msg} Received parameters: {parameters}")
+            return ToolResponse(text=json.dumps({"error": error_msg})), 0.0, {}
 
         if not isinstance(query, str) or not query:
             error_msg = "Error: 'query' must be a non-empty string."
@@ -276,9 +284,9 @@ class VideoSearchTool(BaseTool):
         video_id = kwargs.get("video_id")
         precomputed_frames = kwargs.get("precomputed_frames")
         
-        if precomputed_frames is not None:
-            print(f"Will be using precomputed frames: {len(precomputed_frames)}")
-            print("Total frames: ", sum(len(frame["encoded_frames"]) for frame in precomputed_frames))
+        # if precomputed_frames is not None:
+            #print(f"Will be using precomputed frames: {len(precomputed_frames)}")
+            #print("Total frames: ", sum(len(frame["encoded_frames"]) for frame in precomputed_frames))
         #print(f"query: {query}, mode: {mode}, topk: {topk}, video_id: {video_id}")
 
         # type checks done above
