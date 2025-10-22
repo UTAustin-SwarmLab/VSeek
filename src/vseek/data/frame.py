@@ -288,6 +288,8 @@ class VideoFrames(BaseModel):
         if os.path.exists(embeddings_file):
             video_frames.embeddings = torch.load(embeddings_file, map_location=torch.device('cpu'))
         
+        # print(f"Length of embeddings: {len(video_frames.embeddings)}")
+        # print(f"Length of windows: {len(video_frames.frames_by_window)}")
         subtitle_embeddings_file = os.path.join(base_dir, "subtitle_embeddings.pt")
         if os.path.exists(subtitle_embeddings_file):
             video_frames.subtitle_embeddings = torch.load(subtitle_embeddings_file, map_location=torch.device('cpu'))
