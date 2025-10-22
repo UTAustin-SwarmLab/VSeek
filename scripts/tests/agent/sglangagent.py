@@ -15,6 +15,7 @@ PROJECT_ROOT = "/home/hg22723/projects/VSeek-R1"
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 from verl.workers.rollout.sglang_rollout.sglang_rollout import SGLangRollout
+from vseek.agent.slgang_rollout import VSeekSGLangRollout, VSeekSGLangRolloutTag
 from tests.workers.rollout.utils_sglang import (
     are_lists_similar,
     clean_torchelastic_env,
@@ -56,8 +57,8 @@ def test_async_vseek_sglang_rollout(parquet_path: str, count: int):
     initialize_global_process_group()
     clean_torchelastic_env()
 
-    max_prompt_length = 2048
-    max_response_length = 512
+    max_prompt_length = 8196
+    max_response_length = 12000
     dtype = "bfloat16"
     tensor_parallel_size = 2
     # local_model_path = os.path.expanduser("Qwen/Qwen2.5-VL-7B-Instruct")
@@ -99,6 +100,8 @@ def test_async_vseek_sglang_rollout(parquet_path: str, count: int):
         dtype,
         tensor_parallel_size,
         "./scripts/tests/agent/test_config.yaml",
+        skip_tokenizer_init=True,
+
     )
     rollout_config.gpu_memory_utilization = 0.80
     rollout_config.multi_turn.max_assistant_turns = 5
@@ -106,7 +109,7 @@ def test_async_vseek_sglang_rollout(parquet_path: str, count: int):
     
     rollout_config: RolloutConfig = omega_conf_to_dataclass(rollout_config, dataclass_type=RolloutConfig)
     model_config = HFModelConfig(path=local_model_path)
-    rollout = SGLangRollout(
+    rollout =  VSeekSGLangRolloutTag(
         config=rollout_config,
         model_config=model_config,
         device_mesh=None,
@@ -141,15 +144,40 @@ def test_async_vseek_sglang_rollout(parquet_path: str, count: int):
     output = rollout.generate_sequences(prompts=dprompts)
     print(f"generated {output.batch['responses'].shape=}")
 
+
+
     sglang_output = output.to("cpu")
 
-    sglang_response_tokens = tokenizer.batch_decode(sglang_output.batch["responses"])
-
+    sglang_response_tokens = tokenizer.batch_decode(
+        sglang_output.batch["responses"],
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=True,
+    )
+    sglang_input_tokens = tokenizer.batch_decode(
+        sglang_output.batch["input_ids"],
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=True,
+    )
+    # Final sanitize: strip whitespace and any residual end-of-text markers
+    sglang_response_tokens = [
+        (token or "").replace("<|endoftext|>", "").strip()
+        for token in sglang_response_tokens
+    ]
+    sglang_input_tokens = [
+        (token or "").replace("<|endoftext|>", "").strip()
+        for token in sglang_input_tokens
+    ]
+    # Drop empty strings after cleanup
+    sglang_response_tokens = [t for t in sglang_response_tokens if t]
+    sglang_input_tokens = [t for t in sglang_input_tokens if t]
     # print(f"hf response: {hf_response_tokens}")
     # print(f"sglang response: {sglang_response_tokens}")
     # assert are_lists_similar(hf_response_tokens, sglang_response_tokens)
+    print(f"sglang response: {sglang_response_tokens}")
+    print(f"sglang input: {sglang_input_tokens}")
     print("SGLang w tool Test Passed!")
 
+    
     torch.distributed.barrier()
     torch.distributed.destroy_process_group()
 
