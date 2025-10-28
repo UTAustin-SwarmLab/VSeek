@@ -6,9 +6,10 @@ import multiprocessing as mp
 import os
 from copy import deepcopy
 from json import JSONDecodeError
+import json
 from typing import Any, Generator, Optional
 from uuid import uuid4
-
+from copy import deepcopy
 import numpy as np
 import ray
 import sglang.srt.entrypoints.engine
@@ -66,7 +67,7 @@ try:
 except ImportError:
     from sglang.srt.openai_api.protocol import Tool
 
-
+import re
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
@@ -129,7 +130,6 @@ class VSeekSGLangRollout(SGLangRollout):
         )
         self.visible_devices_set = set(",".join(visible_devices).split(","))
         # os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(sorted(list(self.visible_devices_set)))
-
 
     async def _async_rollout_a_request(
         self,
@@ -423,6 +423,7 @@ class VseekTagToToolParser:
     '''
     def __init__(self, config: RolloutConfig, tags: List[str]):
         self.config = config
+        self.tags = tags
     
     def parse(self, content: str) -> list[OpenAIFunctionToolCall]:
         return []
@@ -449,13 +450,13 @@ class VseekTagToToolParser:
                     mode = "subtitle"
                 tool_calls.append({
                     "name": "video_search",
-                    "arguments": 
-                        {
-                            "query": query,
-                            "mode": mode,
-                        },
+                    "arguments": json.dumps({
+                        "query": query,
+                        "mode": mode,
+                    }),
                     "tool_index": str(uuid4()),
                 })
+        
         return content, tool_calls
     
     def parse_stream(self, content: str) -> Generator[OpenAIFunctionToolCall, None, None]:
@@ -471,12 +472,13 @@ class VseekTagToToolParser:
                     mode = "base"
                 yield {
                     "name": "video_search",
-                    "arguments": {
+                    "arguments": json.dumps({
                         "query": query,
                         "mode": mode,
-                    },
+                    }),
                     "tool_index": str(uuid4()),
                 }
+                
     
     
     
@@ -529,7 +531,25 @@ class VSeekSGLangRolloutTag(SGLangRollout):
         self.visible_devices_set = set(",".join(visible_devices).split(","))
         # os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(sorted(list(self.visible_devices_set)))
 
-
+    async def _sanitize_output(self, content:str, tags: List[str]) -> dict:
+        # Extract the text <think> and </think> and tags and return the text
+        sanitized_text = ""
+        think_text = re.search(r"<think>(.*?)</think>", content, re.DOTALL)
+        if think_text:
+            sanitized_text += "<think>{}</think>".format(think_text.group(1))
+        else:
+            sanitized_text += "<think></think>"
+        # print("Content: {}".format(content))
+        for tag in tags:
+            tag_text = re.search(tag, content, re.DOTALL)
+            if tag_text:
+                tag_text = tag_text.group(1).strip()
+                copy_tag = deepcopy(tag)
+                sanitized_text += copy_tag.replace("(.*?)", tag_text)
+                break
+        # print("Sanitized Text: {}".format(sanitized_text))
+        return sanitized_text
+    
     async def _async_rollout_a_request(
         self,
         req: AsyncRolloutRequest,
@@ -545,6 +565,7 @@ class VSeekSGLangRolloutTag(SGLangRollout):
         current_turns = 0
         user_turns = 0
         user_turn_rewards = []
+        
         self.tool_parser = VseekTagToToolParser(self.config, kwargs.get("tags", ["<search>(.*?)</search>", "<search_subtitle>(.*?)</search_subtitle>"]))
 
         # Create request-level sampling parameters
@@ -642,6 +663,8 @@ class VSeekSGLangRolloutTag(SGLangRollout):
                     )
            
                 output = await self._handle_engine_call(_req, request_sampling_params, image_data=image_data)
+
+                
                 if self.config.skip_tokenizer_init:
                     content_ids = output["output_ids"]
                     content = self.processing_class.decode(content_ids, skip_special_tokens=True)
@@ -651,7 +674,15 @@ class VSeekSGLangRolloutTag(SGLangRollout):
                 else:
                     content_ids = None
                     content = output["text"]
-                #print("output: {}".format(content))
+                    
+                content = await self._sanitize_output(content, kwargs.get("tags", ["<answer>(.*?)</answer>", "<search>(.*?)</search>", "<search_subtitle>(.*?)</search_subtitle>"]))
+                # processing_class may be a tokenizer or a processor; get tokenizer in either case
+                try:
+                    tokenizer = self.processing_class.tokenizer
+                except AttributeError:
+                    tokenizer = self.processing_class
+                output["output_ids"] = tokenizer.encode(content, add_special_tokens=False)
+                # print("output: {}".format(content))
                 # Content is obtained, begin processing the content to extract tool calls
                 finish_reason_type = FinishReasonTypeEnum.from_str(output["meta_info"]["finish_reason"]["type"])
                 current_turns += 1
@@ -678,8 +709,8 @@ class VSeekSGLangRolloutTag(SGLangRollout):
                         for tool_call in tool_calls:
                             function, has_decode_error = OpenAIFunctionCallSchema.from_openai_function_parsed_schema(
                                 OpenAIFunctionParsedSchema(
-                                    name=tool_call.name,
-                                    arguments=tool_call.parameters,
+                                    name=tool_call['name'],
+                                    arguments=tool_call['arguments'],
                                 )
                             )
                             # Drop the tool call if its arguments has decode error
@@ -688,7 +719,7 @@ class VSeekSGLangRolloutTag(SGLangRollout):
                                 continue
                             parsed_tool_calls.append(
                                 OpenAIFunctionToolCall(
-                                    id=str(tool_call.tool_index),
+                                    id=str(tool_call['tool_index']),
                                     function=function,
                                 )
                             )
