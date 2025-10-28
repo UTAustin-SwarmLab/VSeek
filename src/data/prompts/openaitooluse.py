@@ -6,11 +6,11 @@ system_prompt = """
             **INSTRUCTIONS**:
             Follow these instructions precisely on every turn.
          
-            1) Reason: Write your step-by-step reasoning inside <think>...</think>.
-            2) Decide: Based on your reasoning, decide if you have enough information in the frames obtained so far to answer.
-            3) Act (Choose ONE):
-               - If the answer is NO, output <tool_call>...</tool_call>. You can call the tool only one time every turn. However, you will obtain a fixed number of frames per turn.
-               - If the answer is YES, output exactly one <answer>...</answer>.
+            1) Reason: Write your detailed step-by-step reasoning inside <think>...</think>.
+            2) Decide: Based on your reasoning, decide whether you need to search for more information or answer the question.
+            3) Act: You must choose ONE of the following actions:
+               - If you need to search for more information, output <tool_call>...</tool_call>. You can call the tool only one time every turn. However, you will obtain a fixed number of frames per turn.
+               - If you have enough information, output exactly one <answer>...</answer>.
             4) Final Check: Your output must contain the <think> block and EXACTLY ONE action block (<tool_call> OR <answer>).
             5) Once you answer the question, the trajectory ends.
             
@@ -18,7 +18,7 @@ system_prompt = """
             - Use JSON strictly inside <tool_call>...</tool_call> with exactly this shape:"
                \"name\": \"video_search\", \"arguments\": {\"query\": <string>, \"mode\": \"base\"|\"subtitle\"}}
             - Choose mode=\"base\" for language based search or mode=\"subtitle\" for subtitle based match to retrieve the frames.
-            - Emit EXACTLY ONE <tool_call> per turn when you need more information; no extra text outside the tags.
+            - Emit EXACTLY ONE <tool_call> per turn only when you need more information; no extra text outside the tags.
             
             **Answer Specification**
             - When you have enough information, output ONLY the option number inside <answer>...</answer>
@@ -33,6 +33,7 @@ system_prompt = """
             
             EXAMPLE 1 (Language search):
             
+            Question: What is the chef doing? Answer options: 0. Mixing flour 1. Pouring flour 2. Adding ingredients 3. Pouring flour
             Turn 1:
             <think>I should first locate where the chef uses a mixing bowl.</think>
             <tool_call>\n{\"name\": \"video_search\", \"arguments\": {\"query\": \"a chef with a large mixing bowl\", \"mode\": \"base\"}}\n</tool_call>
@@ -47,6 +48,7 @@ system_prompt = """
                 
             EXAMPLE 2 (Temporal reasoning with language search):
             
+            Question: Who does the person throw the ball to? Answer options: 0. The cat 1. The dog 2. The person 3. The ball
             Turn 1:
             <think>I need to find when the person picks up the red ball.</think>
             <tool_call>\n{\"name\": \"video_search\", \"arguments\": {\"query\": \"a person picking up a red ball\", \"mode\": \"base\"}}\n</tool_call>
@@ -57,6 +59,7 @@ system_prompt = """
             
             EXAMPLE 3 (Subtitle-guided search):
             
+            Question: What is the woman wearing when the subtitle 'you're interested in.' appears? Answer options: 0. A hat 1. A scarf 2. A jacket 3. A dress
             Turn 1:
             <think>I should locate the moment the subtitle 'you're interested in.' appears.</think>
             <tool_call>\n{\"name\": \"video_search\", \"arguments\": {\"query\": \"you're interested in.\", \"mode\": \"subtitle\"}}\n</tool_call>

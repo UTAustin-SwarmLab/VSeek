@@ -18,7 +18,8 @@ from vseek.data.frame import VideoFrames
 import cv2
 import base64
 
-from data.prompts import tagbased, openaitooluse
+from data.prompts.prompts import tagbased, openaitooluse
+
 def build_prompt(args, entry: dict) -> list[dict]:
     question_text: str = entry["question"].strip()
     candidates: list[str] = entry.get("candidates", [])
