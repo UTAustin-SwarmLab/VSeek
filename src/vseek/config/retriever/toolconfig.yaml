@@ -2,8 +2,8 @@
 
 
 inference:
-  max_image_width: 256
-  max_image_height: 256
+  max_image_width: 224
+  max_image_height: 224
   image_quality: 90
   temperature: 0.5
   topk: 1

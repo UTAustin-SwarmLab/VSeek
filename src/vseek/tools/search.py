@@ -280,7 +280,7 @@ class VideoSearchTool(BaseTool):
 
         search_type = "video_frames" if mode == "base" else "subtitles"
         # Maybe needs to be passed through kwargs
-        topk = kwargs.get("topk")
+        # topk = kwargs.get("topk")
         video_id = kwargs.get("video_id")
         precomputed_frames = kwargs.get("precomputed_frames")
         
@@ -296,7 +296,7 @@ class VideoSearchTool(BaseTool):
             if search_type == "video_frames":
                 frames, frame_indices, metadata = await self._search_video_frames(
                     query=query, 
-                    topk=topk,
+                    topk=self.topk,
                     video_id=video_id,
                     search_type=search_type,
                     precomputed_frames=precomputed_frames
@@ -304,7 +304,7 @@ class VideoSearchTool(BaseTool):
             else:
                 frames, frame_indices, metadata = await self._search_subtitles(
                     subtitle=query, 
-                    topk=topk, 
+                    topk=self.topk, 
                     video_id=video_id, 
                     search_type=search_type,    
                     precomputed_frames=precomputed_frames
