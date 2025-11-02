@@ -19,7 +19,7 @@ class LocalVLLMBase:
         self.max_image_height = config.inference.max_image_height
         self.max_images = getattr(config.inference, "max_images_per_turn", 16)
         self.temperature = float(getattr(config.inference, "temperature", 0.0))
-
+        self.thinking_enabled = getattr(config.inference, "thinking_enabled", True)
         # Processor and LLM
         self.processor = AutoProcessor.from_pretrained(self.model_path, trust_remote_code=True)
         self.llm = LLM(
@@ -46,7 +46,10 @@ class LocalVLLMBase:
     def build_prompt_and_mm(self, messages: List[Dict[str, Any]]):
         from qwen_vl_utils import process_vision_info
 
-        prompt = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        prompt = self.processor.apply_chat_template(messages, 
+                                                    tokenize=False, 
+                                                    add_generation_prompt=True,
+                                                    thinking_enabled=self.thinking_enabled)
         image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
         mm_data: Dict[str, Any] = {}
         if image_inputs is not None:
