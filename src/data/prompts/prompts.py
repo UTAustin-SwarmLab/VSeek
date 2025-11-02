@@ -8,6 +8,7 @@ Exports two namespaces:
 
 from .tagbased import system_prompt as tagbased_system_prompt
 from .openaitooluse import system_prompt as openaitooluse_system_prompt
+from .tagbasedsummary import system_prompt as tagbasedsummary_system_prompt
 
 # class _TagBased:
 #     # Tag-based agent: language search via <search>, subtitle search via <search_subtitle>
@@ -103,11 +104,16 @@ class _TagBased:
 class _OpenAIToolUse:
     # OpenAI function-call style: tool JSON inside <tool_call>
     system_prompt: str = openaitooluse_system_prompt
+    
+class _TagBasedSummary:
+    # Tag-based agent: language search via <search>, subtitle search via <search_subtitle>
+    system_prompt: str = tagbasedsummary_system_prompt
 
 
 tagbased = _TagBased()
 openaitooluse = _OpenAIToolUse()
+tagbasedsummary = _TagBasedSummary()
 
-__all__ = ["tagbased", "openaitooluse"]
+__all__ = ["tagbased", "openaitooluse", "tagbasedsummary"]
 
 
