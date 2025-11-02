@@ -2,7 +2,7 @@
 
 # MODEL="OpenGVLab/InternVL2_5-8B"
 # MODEL="meta-llama/Llama-3.2-11B-Vision-Instruct"
-MODEL="Qwen/Qwen2.5-VL-7B-Instruct"
+MODEL="Qwen/Qwen2.5-VL-3B-Instruct"
 export CUDA_DEVICE_ORDER="PCI_BUS_ID"
 export NCCL_P2P_DISABLE=1
 

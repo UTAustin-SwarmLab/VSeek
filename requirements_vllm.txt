@@ -19,7 +19,7 @@ jedi==0.19.1
 ray[default]
 
 tensordict>=0.8.0,<=0.10.0,!=0.9.0
-vllm==0.10.2
+vllm==0.11.0
 xformers
 
 # Data Handling & Scientific Computing
@@ -100,3 +100,4 @@ tqdm==4.67.1
 wandb
 prompt-toolkit==3.0.52
 traitlets==5.14.2
+nest-asyncio==1.6.0
