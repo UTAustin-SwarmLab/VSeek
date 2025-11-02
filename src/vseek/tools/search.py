@@ -91,19 +91,21 @@ class VideoSearchTool(BaseTool):
         self.index_path = config.get("index_path", "data/index")
         self.cache_limit = config.get("cache_limit", 64)
         self.max_frames_per_turn = config.get("max_frames_per_turn", 16)
+        self.video_summary = config.get("video_summary", False)
+        print(f"Config: {config}")
         # Initialize all the frames as per the dataset
         
         dir_name = f"{self.dataset_name}_window_{self.window_size}"
         #print(f"dir_name: {dir_name}")
         self.data_root = Path(self.index_path).joinpath(dir_name)
         
-        if self.dataset_name == "lvb":
-            # convert to dict to DictConfig
-            dataset_config = DictConfig(config)
-            dataset = LongVideoBench(dataset_config)
-            self.entries = dataset.load_data()
-        else:
-            raise ValueError(f"Unsupported dataset: {self.dataset_name}")
+        # if self.dataset_name == "lvb":
+        #     # convert to dict to DictConfig
+        #     dataset_config = DictConfig(config)
+        #     dataset = LongVideoBench(dataset_config)
+        #     self.entries = dataset.load_data()
+        # else:
+        #     raise ValueError(f"Unsupported dataset: {self.dataset_name}")
         
         logger.info(f"Loading video index from: {self.data_root}")
         self.cached_frames_dict = {
@@ -140,6 +142,12 @@ class VideoSearchTool(BaseTool):
             "reward": [],
             "search_results": [],
         }
+        
+        if self.video_summary:
+
+            video_summary = kwargs.get("video_summary")
+            print(f"Using video_summary: {len(kwargs.get('video_summary'))}")
+            return instance_id, ToolResponse(image=video_summary, text="The following the summary of the video.")
         return instance_id, ToolResponse()
 
     async def _search_video_frames(
@@ -189,13 +197,11 @@ class VideoSearchTool(BaseTool):
             vid = data.get("video_id") or video_id
             frames = []
             remapped_precomputed_frames = {}
-            for frame in precomputed_frames:
-                remapped_precomputed_frames[frame["window_idx"]] = frame["encoded_frames"]
-                
             if precomputed_frames is not None:
+                for frame in precomputed_frames:
+                    remapped_precomputed_frames[frame["window_idx"]] = frame["encoded_frames"]
                 for i in frame_indices:
                     frames += remapped_precomputed_frames.get(i, [])
-
             else:
                 for i in frame_indices:
                     frames += self.cached_frames_dict[vid].get_frame_chunk(i)
@@ -321,7 +327,7 @@ class VideoSearchTool(BaseTool):
                 "mode": "base" if search_type == "video_frames" else "subtitle",
                 "query": query,
                 "frame_indices": frame_indices,
-                "topk": topk,
+                "topk": self.topk,
                 "metadata": metadata,
             }
 
