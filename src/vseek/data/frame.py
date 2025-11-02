@@ -107,7 +107,13 @@ class VideoFrames(BaseModel):
 
     def get_frame_chunk(self, window_idx: int) -> list[np.ndarray]:
         return self.frames_by_window[window_idx]
-
+    
+    def uniformly_sample_frames(self, num_frames: int) -> list[np.ndarray]:
+        if num_frames > len(self.all_frames):
+            return self.all_frames
+        indices = np.linspace(0, len(self.all_frames) - 1, num_frames, dtype=int)
+        return [self.all_frames[i] for i in indices]
+    
     def get_window_range(self, window_idx: int) -> tuple[int, int]:
         """Get the frame range for a given window index.
 
