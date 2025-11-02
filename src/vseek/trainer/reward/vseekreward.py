@@ -93,7 +93,16 @@ def count_answer_tags(text):
     return opening_tags, closing_tags
 
 
-def compute_score(solution_str, ground_truth, data_source, extra_info, method="strict", format_score=0.0, score=1.0):
+def compute_score(
+    solution_str,
+    ground_truth,
+    data_source,
+    extra_info,
+    method="strict",
+    format_score=0.0,
+    score=1.0,
+    **kwargs,
+):
     """The scoring function for exact match (EM).
 
     Args:
