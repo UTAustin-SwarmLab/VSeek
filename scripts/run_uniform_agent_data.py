@@ -17,8 +17,7 @@ def build_options_string(candidates: list[str]) -> str:
     lines = [f"{idx}. {text}" for idx, text in enumerate(candidates)]
     return "\n".join(lines)
 
-
-def parse_answer(answer: str) -> str:
+def parse_answer_single(answer: str) -> str:
     import re
     if answer is None:
         return ""
@@ -27,13 +26,35 @@ def parse_answer(answer: str) -> str:
         return numbers[0]
     return ""
 
+def parse_answer_base(answer: str) -> str:
+    import re
+    if answer is None:
+        return ""
+    numbers = re.findall(r"(\d+)", answer)
+    if numbers:
+        return numbers[0]
+    return ""
 
-def calculate_accuracy(results: list[dict]) -> float:
+def parse_answer_cot(answer: str) -> str:
+    import re
+    if answer is None:
+        return ""
+    # numbers = re.findall(r"<\s*answer\s*>([\s\S]*?)<\s*/\s*answer\s*>", answer, flags=re.IGNORECASE)
+    numbers = re.findall(r"### (\d+)", answer)
+    return numbers[-1].strip() if numbers else ""
+
+
+def calculate_accuracy(results: list[dict], agent_prompt_type: str="base") -> float:
     if not results:
         return 0.0
     correct = 0
     for result in results:
-        pred = parse_answer(result["pred"])
+        if agent_prompt_type == "base":
+            pred = parse_answer_base(result["pred"])
+        elif agent_prompt_type == "cot":
+            pred = parse_answer_cot(result["pred"])
+        else:
+            raise ValueError(f"Invalid agent prompt type: {agent_prompt_type}")
         gt = str(result["gt"])
         if pred == gt:
             correct += 1
@@ -55,6 +76,7 @@ def main(cfg: DictConfig):
     dir_name = f"{dataset_name}_window_{window_size}"
     data_root = Path(cfg.retriever.index_path).joinpath(dir_name)
 
+    agent_prompt_type = cfg.inference.get("agent_prompt_type", "base")
     results = []
     results_path = f"{cfg.inference.output_dir}/{cfg.dataset.name}_{cfg.inference.max_images_per_turn}"
     results_file = f"{results_path}/agent_results.json"
@@ -102,13 +124,13 @@ def main(cfg: DictConfig):
             "question_id": entry['metadata']['id'],
             "pred": pred,
             "gt": str(correct_choice),
-            "parsed_pred": parse_answer(pred),
+            "parsed_pred": parse_answer_base(pred) if agent_prompt_type == "base" else parse_answer_cot(pred),
         }
         results.append(result)
         write_results(results, results_file)
         print(f"Video {video_id}: Pred='{pred}' -> Parsed='{result['parsed_pred']}', GT='{correct_choice}'")
 
-    accuracy = calculate_accuracy(results)
+    accuracy = calculate_accuracy(results, cfg.inference.get("agent_prompt_type", "base"))
     print(f"\nFinished. Total evaluated: {len(results)}")
     print(f"Accuracy: {accuracy:.3f} ({sum(1 for r in results if r['parsed_pred'] == r['gt'])}/{len(results)})")
 

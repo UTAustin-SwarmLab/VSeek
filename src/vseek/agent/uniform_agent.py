@@ -20,7 +20,7 @@ class UniformSampleAgent(LocalVLLMBase):
         self.image_quality = config.inference.image_quality
         self.temperature = getattr(config.inference, "temperature", 0.0)
         self.max_images = getattr(config.inference, "max_images_per_turn", 16)
-
+        self.agent_prompt_type = getattr(config.inference, "agent_prompt_type", "base")
 
     def _encode_frame(self, frame):
         return super()._encode_frame(
@@ -34,39 +34,23 @@ class UniformSampleAgent(LocalVLLMBase):
         # Prefer native video pathway if available; otherwise fall back to frames-as-images.
         # video_path = getattr(data_input.video, "video_path", None)
         video_path = None
-        
-        system_prompt = """
-            You are a helpful assistant. Look at the provided images sampled uniformly from a video and must choose the correct option from the given options to answer the question.
-            You must only output the number of the correct option.
-        """
-        system_prompt_examples = """
-            You are a helpful assistant. Look at the provided images sampled uniformly from a video and must choose the correct option from the given options to answer the question.
-            You must only output the number of the correct option.
-            **EXAMPLES**:
-            (the agent receives a video in the form of series of images)
-            Question: What is the first ingredient the chef adds to the mixing bowl? Options: 0. Mint , 1. Sugar, 2. Salt, 3. Flour
-            3
-           
-           (the agent receives a video in the form of series of images)
-            Question: What is the color of the unicorn? Options: 0. Green, 1. Blue, 2. Pink, 3. White 4. Yellow
-            2
-        """
-        
-        system_prompt_cot = """
-            You are a helpful assistant. Look at the provided images sampled uniformly from a video and answer the question concisely.
-            You must answer the question with the correct option within the <answer></answer> tags. 
-            Do not provide empty fields and you must provide an answer to the best of your ability.
-
-            **EXAMPLES**:
-            (the agent receives a video in the form of series of images)
-            Question: What is the first ingredient the chef adds to the mixing bowl? Options: A. Mint , B. Sugar, C. Salt, D. Flour
-            D
-           
-           (the agent receives a video in the form of series of images)
-            Question: What is the color of the unicorn? Options: A. Green, B. Blue, C. Pink, D. White
-            C
-        """
-
+        if self.agent_prompt_type == "base" or self.agent_prompt_type == "single":
+            system_prompt = """
+                You are a helpful assistant. Look at the provided images sampled uniformly from a video and must choose the correct option from the given options to answer the question.
+                You must only output the number of the correct option without thinking. Eg. 3
+                
+            """
+        elif self.agent_prompt_type == "cot":
+            system_prompt = """
+                You are a helpful assistant. Look at the provided images sampled uniformly from a video and answer the question concisely.
+                **INSTRUCTIONS**:
+                1. First think very concisely within 100 words, about the question and the provided images within the <think> and </think> tags.
+                2. You must provide the final answer the question with the correct option after ###.
+                3. Do not provide empty fields and you must provide an answer to the best of your ability.
+                4. For example.
+                <think>I have found the mixing bowl, but no ingredients have been added yet. I need to find the next action where something is put into the bowl.</think>
+                ### 3
+                """
 
         if video_path:
             print("Using video pathway")
