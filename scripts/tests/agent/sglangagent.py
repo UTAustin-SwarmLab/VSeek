@@ -94,20 +94,23 @@ def test_async_vseek_sglang_rollout(parquet_path: str, count: int):
     #         f"HF decoding returned {num_empty} empty responses out of {len(hf_response_tokens)}"
     #     )
     
-    rollout_config = get_rollout_config(
-        max_response_length,
-        max_prompt_length,
-        dtype,
-        tensor_parallel_size,
-        "./scripts/tests/agent/test_config.yaml",
-        skip_tokenizer_init=True,
+    # rollout_config = get_rollout_config(
+    #     max_response_length,
+    #     max_prompt_length,
+    #     dtype,
+    #     tensor_parallel_size,
+    #     "./scripts/tests/agent/test_config.yaml",
+    #     skip_tokenizer_init=True,
 
-    )
-    rollout_config.gpu_memory_utilization = 0.80
-    rollout_config.multi_turn.max_assistant_turns = 5
-    rollout_config.multi_turn.enable = True
+    # )
+    # rollout_config.gpu_memory_utilization = 0.80
+    # rollout_config.multi_turn.max_assistant_turns = 5
+    # rollout_config.multi_turn.enable = True
     
-    rollout_config: RolloutConfig = omega_conf_to_dataclass(rollout_config, dataclass_type=RolloutConfig)
+    # rollout_config: RolloutConfig = omega_conf_to_dataclass(rollout_config, dataclass_type=RolloutConfig)
+    rollout_config = omega_conf.load_config_from_yaml("src/vseek/config/lvb_grpo.yaml")
+    rollout_config = rollout_config.actor_rollout_ref.rollout
+    
     model_config = HFModelConfig(path=local_model_path)
     rollout =  VSeekSGLangRolloutTag(
         config=rollout_config,

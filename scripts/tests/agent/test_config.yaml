@@ -6,7 +6,7 @@ inference:
   max_image_height: 256
   image_quality: 90
   temperature: 0.5
-  topk: 1
+  topk: 4
   max_parse_attempts: 3
   max_reasoning_attempts: 5
   output_dir: "output"
@@ -27,6 +27,7 @@ tools:
       index_path: ${.retriever.index_path}
       cache_limit: 64
       max_frames_per_turn: 16
+      video_summary: false
       dataset:
         name: "lvb"
         desired_interval_in_sec: ${..retriever.desired_interval_in_sec}
@@ -37,7 +38,7 @@ tools:
         port: 9000
         server_url: "http://127.0.0.1:${.port}"
         index_path: "/home/hg22723/vseek/dataset"
-        topk: 1
+        topk: 4
         retriever_name: "ViClip"
         retriever_model: "ViClip"
         retrieval_model_path: "/nas/mars/model_weights/viclip/ViClip-InternVid-10M-FLT.pth"
