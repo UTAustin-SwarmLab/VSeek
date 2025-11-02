@@ -46,7 +46,7 @@ def _get_rank_and_world():
     # Fallback for single-process runs or early calls
     return int(os.getenv("RANK", 0)), int(os.getenv("WORLD_SIZE", 1))
 
-def _resolve_parquet_files(parquet_path: str) -> list[str]:
+def _resolve_parquet_files(parquet_path: str, tag: str=None) -> list[str]:
     path = os.path.expanduser(parquet_path)
     if os.path.isdir(path):
         files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith(".parquet")]
@@ -57,8 +57,12 @@ def _resolve_parquet_files(parquet_path: str) -> list[str]:
     if os.path.isfile(path):
         parent = os.path.dirname(path) or "."
         # Prefer explicit train+val in same directory if present
-        train_p = os.path.join(parent, "train.parquet")
-        val_p = os.path.join(parent, "val.parquet")
+        if tag is None:
+            train_p = os.path.join(parent, "train.parquet")
+            val_p = os.path.join(parent, "test.parquet")
+        else:
+            train_p = os.path.join(parent, f"train_{tag}.parquet")
+            val_p = os.path.join(parent, f"test_{tag}.parquet")
         both: list[str] = []
         if os.path.isfile(train_p):
             both.append(train_p)
@@ -81,9 +85,10 @@ def _load_lvb_examples(
     count: int | None,
     global_count: bool,
     shuffle_seed: int,
+    tag: str=None,
 ):
     parquet_path = os.path.expanduser(parquet_path)
-    data_files = _resolve_parquet_files(parquet_path)
+    data_files = _resolve_parquet_files(parquet_path, tag=tag )
     ds = datasets.load_dataset("parquet", data_files=data_files)["train"]
     if len(ds) == 0:
         raise RuntimeError(f"Empty parquet dataset: {parquet_path}")
@@ -157,6 +162,7 @@ def rollout_agent_data(
     global_count: bool,
     shuffle_seed: int,
     topk: int,
+    prompt_type: str,
 ):
 
     assert torch.cuda.device_count() >= 1
@@ -175,6 +181,7 @@ def rollout_agent_data(
         count=count,
         global_count=global_count,
         shuffle_seed=shuffle_seed,
+        tag=prompt_type,
     )
     rank, world_size = _get_rank_and_world()
     out_dir = Path(output_dir)
@@ -222,7 +229,14 @@ def rollout_agent_data(
     
     rollout_config: RolloutConfig = omega_conf_to_dataclass(rollout_config, dataclass_type=RolloutConfig)
     model_config = HFModelConfig(path=local_model_path)
-    rollout = VSeekSGLangRollout(
+    if prompt_type == "tag":
+        rollout = VSeekSGLangRolloutTag(
+            config=rollout_config,
+            model_config=model_config,
+            device_mesh=None,
+        )
+    elif prompt_type == "openai":
+        rollout = VSeekSGLangRollout(
         config=rollout_config,
         model_config=model_config,
         device_mesh=None,
@@ -243,6 +257,13 @@ def rollout_agent_data(
             tokenizer.apply_chat_template(m, tokenize=False, add_generation_prompt=True)
             for m in preencode_prompts
         ]
+        # Sanitize any unintended multimodal placeholders (e.g., <|video_pad|>, <|image_pad|>)
+        # that may be injected by some chat templates. Our run is text-only.
+        # prompts = [
+        #     re.sub(r"<\|vision_start\|>.*?<\|vision_end\|>", "", p, flags=re.DOTALL)
+        #     for p in prompts
+        # ]
+        # prompts = [p.replace("<|video_pad|>", "").replace("<|image_pad|>", "") for p in prompts]
         input_ids, attention_mask, position_ids = prepare_inputs(
             tokenizer, prompts, max_prompt_length
         )
@@ -332,6 +353,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", default=os.path.expanduser("~/results/sglang_runs"), help="Directory to store JSONL outputs")
     parser.add_argument("--output_prefix", default="sglang", help="Filename prefix for JSONL outputs")
     parser.add_argument("--topk", type=int, default=4, help="Top-k sampling parameter")
+    parser.add_argument("--prompt_type", type=str, default="tag", help="Prompt type: tag or openai")
     args = parser.parse_args()
 
     rollout_agent_data(
@@ -347,4 +369,5 @@ if __name__ == "__main__":
         global_count=args.global_count,
         shuffle_seed=args.shuffle_seed,
         topk=args.topk,
+        prompt_type=args.prompt_type,
     )
