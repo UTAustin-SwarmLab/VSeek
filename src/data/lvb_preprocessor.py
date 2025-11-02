@@ -17,7 +17,7 @@ from data.lvb import LongVideoBench
 from vseek.data.frame import VideoFrames
 import cv2
 import base64
-
+import traceback
 from data.prompts.prompts import tagbased, openaitooluse
 
 def build_prompt(args, entry: dict) -> list[dict]:
@@ -39,6 +39,8 @@ def build_prompt(args, entry: dict) -> list[dict]:
         system_prompt = tagbased.system_prompt
     elif args.prompt_type == "openai":
         system_prompt = openaitooluse.system_prompt
+    elif args.prompt_type == "tagsummary":
+        system_prompt = tagbasedsummary.system_prompt
     else:
         raise ValueError(f"Invalid prompt type: {args.prompt_type}")
     
@@ -65,7 +67,7 @@ if __name__ == "__main__":
     parser.add_argument("--embed_frames", action="store_true", help="Embed base64 frames per window into parquet rows.")
     parser.add_argument("--thumb_max_side", type=int, default=224, help="Max side for thumbnail resize.")
     parser.add_argument("--thumb_quality", type=int, default=85, help="JPEG quality for thumbnails (1-100).")
-    parser.add_argument("--prompt_type", type=str, default="tag", help="Prompt type: tagbased or openai.")
+    parser.add_argument("--prompt_type", type=str, default="tag", help="Prompt type: tagbased or openai or tagsummary")
     args = parser.parse_args()
 
     local_dataset_path = args.local_dataset_path
@@ -134,7 +136,7 @@ if __name__ == "__main__":
                         "execute_kwargs": {
                             "topk": 4,
                             "video_id": entry.get("metadata", {}).get("video_id"),
-                        }
+                        },
                     },
                 },
             },
@@ -156,10 +158,19 @@ if __name__ == "__main__":
                 row["extra_info"]["precomputed_frames"] = frames_by_window
                 
                 row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["precomputed_frames"] = frames_by_window
+                
+                # video summary is uniformly sampled frames
+                video_summary = video_frames.uniformly_sample_frames(args.window_size)
+                encoded_video_summary = [_encode_frame(f, args.thumb_max_side, args.thumb_quality) for f in video_summary]
+                row["extra_info"]["tools_kwargs"]["video_search"]["create_kwargs"] = {
+                    "video_summary": encoded_video_summary,
+                }
+                print(f"Encoded video summary: {len(encoded_video_summary)}")
                 print(f"Encoded {len(frames_by_window)} frames for video {video_id}")
                 # Ensure Arrow-friendly keys
             except Exception:
-                pass
+                print(f"Error processing video {video_id}")
+                print(traceback.format_exc())
 
         processed_rows.append(row)
 
@@ -182,8 +193,8 @@ if __name__ == "__main__":
     train_ds = datasets.Dataset.from_list(train_rows)
     test_ds = datasets.Dataset.from_list(test_rows) if test_rows else datasets.Dataset.from_list([])
 
-    train_path = os.path.join(local_save_dir, f"window_{args.window_size}", f"train_{args.prompt_type}.parquet")
-    test_path = os.path.join(local_save_dir, f"window_{args.window_size}", f"test_{args.prompt_type}.parquet")
+    train_path = os.path.join(local_save_dir, f"window_{args.window_size}", args.prompt_type, "train.parquet")
+    test_path = os.path.join(local_save_dir, f"window_{args.window_size}", args.prompt_type, "test.parquet")
 
     train_ds.to_parquet(train_path)
     test_ds.to_parquet(test_path)
