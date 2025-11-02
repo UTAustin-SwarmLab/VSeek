@@ -27,6 +27,7 @@ tools:
       index_path: ${.retriever.index_path}
       cache_limit: 64
       max_frames_per_turn: 16
+      video_summary: false
       dataset:
         name: "lvb"
         desired_interval_in_sec: ${..retriever.desired_interval_in_sec}
@@ -45,7 +46,7 @@ tools:
         gpu_number: 0
         faiss_gpu: false
         dataset_name: "lvb"
-        window_size: 16
+        window_size: 8
         desired_interval_in_sec: 1
     tool_schema:
       type: function
