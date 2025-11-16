@@ -102,18 +102,25 @@ class VSeekToolAgentLoop(ToolAgentLoop):
                 message = {"role": "tool", "content": tool_response.text or ""}
 
             add_messages.append(message)
-            agent_data.messages.extend(add_messages)
 
             if tool_response.image:
-                if agent_data.image_data is None:
-                    agent_data.image_data = []
-                elif not isinstance(agent_data.image_data, list):
-                    agent_data.image_data = [agent_data.image_data]
+                # if agent_data.image_data is None:
+                #     agent_data.image_data = []
+                # elif not isinstance(agent_data.image_data, list):
+                #     agent_data.image_data = [agent_data.image_data]
 
-                for img in tool_response.image:
-                    if img is not None:
-                        agent_data.image_data.append(img)
-                        new_images_this_turn.append(img)
+                if isinstance(tool_response.image, list):
+                    # Ensure all elements in the list are valid image objects
+                    for img in tool_response.image:
+                        if img is not None:  # Add a check to ensure the image is not None
+                            #agent_data.image_data.append(img)
+                            new_images_this_turn.append(img)  # Using local variable
+                else:
+                    # Ensure the image is not None
+                    if tool_response.image is not None:
+                        #agent_data.image_data.append(tool_response.image)
+                        new_images_this_turn.append(tool_response.image)  # Using local variable
+
 
             if tool_response.video:
                 if tool_response.video:
@@ -135,6 +142,7 @@ class VSeekToolAgentLoop(ToolAgentLoop):
                     **self.apply_chat_template_kwargs,
                 ),
             )
+            # Ensure we pass None (not empty list) when no images
             current_images = new_images_this_turn if new_images_this_turn else None
             model_inputs = self.processor(text=[raw_tool_response], images=current_images, return_tensors="pt")
             response_ids = model_inputs.pop("input_ids").squeeze(0).tolist()
@@ -143,10 +151,25 @@ class VSeekToolAgentLoop(ToolAgentLoop):
                 None,
                 lambda: self.tokenizer.apply_chat_template(add_messages, add_generation_prompt=True, tokenize=True),
             )
+            response_ids = response_ids[len(self.system_prompt) :]
 
-        response_ids = response_ids[len(self.system_prompt) :]
+        # Check length and rollback images/messages if we cannot commit
         if len(agent_data.response_mask) + len(response_ids) >= self.response_length:
             return AgentState.TERMINATED
+
+        # Commit messages after ensuring length is safe
+        if add_messages:
+            agent_data.messages.extend(add_messages)
+        
+        # Extend image_data only if we have new images
+        if len(new_images_this_turn) > 0:
+            if agent_data.image_data is None:
+                agent_data.image_data = new_images_this_turn
+            elif isinstance(agent_data.image_data, list):
+                agent_data.image_data.extend(new_images_this_turn)
+            else:
+                # Convert single image to list and extend
+                agent_data.image_data = [agent_data.image_data] + new_images_this_turn
 
         agent_data.prompt_ids += response_ids
         agent_data.response_mask += [0] * len(response_ids)
@@ -167,9 +190,10 @@ class _VSeekTagToolParser(ToolParser):
 
         function_calls: list[FunctionCall] = []
         cleaned_text = text
-
+        #pattern_text = cleaned_text
+        pattern_text = cleaned_text.split("</think>")[-1]
         for pattern in self._compiled:
-            for match in pattern.finditer(text):
+            for match in pattern.finditer(pattern_text):
                 query = match.group(1)
                 tag_str = pattern.pattern
                 if "<search_subtitle>" in tag_str:
@@ -201,7 +225,7 @@ class _VSeekJSONToolParser(ToolParser):
 
         function_calls: list[FunctionCall] = []
         cleaned_text = text  # keep original text including json tool calls
-
+        
         def _ensure_arg_str(arguments: Any) -> str:
             if isinstance(arguments, str):
                 return arguments
