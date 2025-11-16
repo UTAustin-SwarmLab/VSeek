@@ -32,7 +32,7 @@ def parse_response_with_regex(
 
         search_pattern = r"<search_subtitle>(.*?)</search_subtitle>"
         search_match = re.search(search_pattern, content, re.DOTALL)
-        search_subtitle = search_match.group(1  ).strip() if search_match else None
+        search_subtitle = search_match.group(1).strip() if search_match else None
 
         # Validate that we have the required fields
         # if not thought or len(thought.strip()) < 5:

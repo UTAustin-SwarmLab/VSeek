@@ -168,10 +168,11 @@ class LongVideoBench(Manager):
                 subtitle_path = os.path.join(
                     self._dataset_path, "subtitles", item["subtitle_path"]
                 )
-                question = f"{item['question']} here are the candidates: "
-                for choice_idx, candidate in enumerate(item["candidates"]):
-                    question += f"\n{choice_idx}. {candidate}"
-                question += "\n It's a multiple choice question. You must choose the correct answer as a number."
+                question = "\n This is a multiple choice question. You must choose the correct answer as a number. \n"
+                question += f"Question: {item['question']} \n"
+                # for choice_idx, candidate in enumerate(item["candidates"]):
+                #     question += f"\n{choice_idx}. {candidate}"
+     
 
                 entry = {
                     "question": question,

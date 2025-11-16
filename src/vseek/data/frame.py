@@ -57,6 +57,7 @@ class VideoFrames(BaseModel):
     window_index_map: dict[int, Tuple[int, int]] = Field(default_factory=dict)
     window_by_subtitle: dict[str, list[int]] = Field(default_factory=dict)
     window_index: int = Field(0, description="The current window index counter")
+    video_path: Optional[str] = Field(None, description="The path to the video")
     
     def add_all_frames(self, frames: list[np.ndarray]) -> None:
         self.all_frames = frames
@@ -106,7 +107,13 @@ class VideoFrames(BaseModel):
 
     def get_frame_chunk(self, window_idx: int) -> list[np.ndarray]:
         return self.frames_by_window[window_idx]
-
+    
+    def uniformly_sample_frames(self, num_frames: int) -> list[np.ndarray]:
+        if num_frames > len(self.all_frames):
+            return self.all_frames
+        indices = np.linspace(0, len(self.all_frames) - 1, num_frames, dtype=int)
+        return [self.all_frames[i] for i in indices]
+    
     def get_window_range(self, window_idx: int) -> tuple[int, int]:
         """Get the frame range for a given window index.
 
@@ -150,6 +157,7 @@ class VideoFrames(BaseModel):
 
         # Prepare frames video
         video_path = base_dir / "frames.mp4"
+        self.video_path = str(video_path)
         fps = 1
         if len(self.all_frames) > 0:
             first = self.all_frames[0]
@@ -254,6 +262,7 @@ class VideoFrames(BaseModel):
                 str(k): v for k, v in metadata.get("unique_subtitles_by_window", {}).items()
             },
             all_subtitles=[subs for subs in metadata.get("all_subtitles")],
+            video_path=os.path.join(base_dir, metadata.get("video_file", "frames.mp4"))
         )
 
         # Read frames video
@@ -285,6 +294,8 @@ class VideoFrames(BaseModel):
         if os.path.exists(embeddings_file):
             video_frames.embeddings = torch.load(embeddings_file, map_location=torch.device('cpu'))
         
+        # print(f"Length of embeddings: {len(video_frames.embeddings)}")
+        # print(f"Length of windows: {len(video_frames.frames_by_window)}")
         subtitle_embeddings_file = os.path.join(base_dir, "subtitle_embeddings.pt")
         if os.path.exists(subtitle_embeddings_file):
             video_frames.subtitle_embeddings = torch.load(subtitle_embeddings_file, map_location=torch.device('cpu'))

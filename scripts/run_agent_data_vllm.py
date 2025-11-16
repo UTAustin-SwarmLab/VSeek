@@ -16,7 +16,7 @@ from omegaconf import DictConfig
 
 
 def build_options_string(candidates: list[str]) -> str:
-    lines = [f"{idx + 1}. {text}" for idx, text in enumerate(candidates)]
+    lines = [f"{idx}. {text}" for idx, text in enumerate(candidates)]
     return "\n".join(lines)
 
 
@@ -89,7 +89,7 @@ def main(cfg: DictConfig):
         pkl_path = data_root.joinpath(f"{video_id}")
         if not pkl_path.exists():
             # Skip if the preprocessed frames are not available
-            # You can generate them via LongVideoBench.save_it_as_vseek_data()
+            # You can generate them via LongVideoBench.[save_it_as_vseek_data()
             print(f"[skip] Missing preprocessed frames: {pkl_path}")
             continue
 

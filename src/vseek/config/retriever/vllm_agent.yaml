@@ -1,0 +1,8 @@
+- name: vseek_tag_agent
+  _target_: src.vseek.agent.vllm_rollout.VSeekTagAgentLoop
+  tags:
+    - "<search>(.*?)</search>"
+    - "<search_subtitle>(.*?)</search_subtitle>"
+
+- name: vseek_json_agent
+  _target_: src.vseek.agent.vllm_rollout.VSeekJSONAgentLoop
