@@ -18,7 +18,7 @@ from vseek.data.frame import VideoFrames
 import cv2
 import base64
 import traceback
-from data.prompts.prompts import tagbased, openaitooluse
+from data.prompts.prompts import tagbased, openaitooluse, tagbasedsummary
 
 def build_prompt(args, entry: dict) -> list[dict]:
     question_text: str = entry["question"].strip()
@@ -32,8 +32,8 @@ def build_prompt(args, entry: dict) -> list[dict]:
         "subtitle_path": paths.get("subtitle_path"),
         "resource_path": paths.get("video_path"),
     }
-    question_text = f"Question: {question_text} \n"
-    user_content = "Answer the following multiple choice question: \n" + question_text + "\nOptions: \n" + options_block
+    
+    user_content =  question_text + "\nOptions: \n" + options_block
 
     if args.prompt_type == "tag":
         system_prompt = tagbased.system_prompt
@@ -68,6 +68,8 @@ if __name__ == "__main__":
     parser.add_argument("--thumb_max_side", type=int, default=224, help="Max side for thumbnail resize.")
     parser.add_argument("--thumb_quality", type=int, default=85, help="JPEG quality for thumbnails (1-100).")
     parser.add_argument("--prompt_type", type=str, default="tag", help="Prompt type: tagbased or openai or tagsummary")
+    parser.add_argument("--gpu_number", type=int, default=0, help="GPU number to use for video indexing.")
+    parser.add_argument("--retrieval_model_path", type=str, default=None, help="Path to ViClip retrieval model.")
     args = parser.parse_args()
 
     local_dataset_path = args.local_dataset_path
@@ -81,6 +83,12 @@ if __name__ == "__main__":
             "dataset": {
                 "dataset_path": local_dataset_path,
                 "burned_path": burned_path,
+            },
+            "retriever": {
+                "index_path": args.index_path,
+                "window_size": args.window_size,
+                "gpu_number": args.gpu_number,
+                "retrieval_model_path": args.retrieval_model_path,
             }
         }
     )
@@ -167,6 +175,8 @@ if __name__ == "__main__":
                 }
                 print(f"Encoded video summary: {len(encoded_video_summary)}")
                 print(f"Encoded {len(frames_by_window)} frames for video {video_id}")
+                print(f"Total video length: {len(video_frames.all_frames)}")
+                print(f"Total video windows: {len(video_frames.frames_by_window)}")
                 # Ensure Arrow-friendly keys
             except Exception:
                 print(f"Error processing video {video_id}")

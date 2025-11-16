@@ -18,7 +18,9 @@ import torch
 
 
 import re
-
+'''
+Indexes LVB dataset by video frames and subtitles.
+'''
 def convert_time_to_frame(time: str):
     time = re.sub(r"\s+", "", time)
     hrs, mins, secs = time.split(":")
@@ -168,12 +170,12 @@ class LongVideoBench(Manager):
                 subtitle_path = os.path.join(
                     self._dataset_path, "subtitles", item["subtitle_path"]
                 )
-                question = "\n This is a multiple choice question. You must choose the correct answer as a number. \n"
+                question = "\n This is a multiple choice question. You must choose the correct answer as a number or letter of the option. \n"
                 question += f"Question: {item['question']} \n"
                 # for choice_idx, candidate in enumerate(item["candidates"]):
                 #     question += f"\n{choice_idx}. {candidate}"
      
-
+                ground_truth_frames = []
                 entry = {
                     "question": question,
                     "candidates": item["candidates"],
@@ -199,7 +201,9 @@ class LongVideoBench(Manager):
                         ],
                         "duration": item["duration"],
                         "view_count": item["view_count"],
+                        "original_data": item,
                     },
+
                 }
                 category_buckets[cat].append(entry)
 
@@ -270,6 +274,7 @@ class LongVideoBench(Manager):
                     original_frame_count = video.video_info.original_frame_count
                     original_duration = video.video_info.original_duration
                     desired_frame_count = video.video_info.processed_frame_count
+                    
                     frame_step = video.get_frame_step(desired_interval_in_sec=desired_interval_in_sec)
 
                     # print(f"Subtitles {subtitles}")
