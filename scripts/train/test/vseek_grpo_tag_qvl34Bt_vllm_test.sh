@@ -9,7 +9,7 @@ export CUDA_LAUNCH_BLOCKING=1
   # rerun your training
 PROJECT_DIR="../../../src/vseek/"
 CONFIG_PATH="$PROJECT_DIR/config"
-MODEL_PATH="Qwen/Qwen3-VL-4B-Thinking"
+MODEL_PATH="chec[kpoints/vseek/qwen3-4bt_vl_lvb-emreward-vllm-wtool-tag/global_step_240/actor"
 python3 -m vseek.trainer.main_ppo \
     --config-path="$CONFIG_PATH" \
     --config-name='lvb_grpo' \
@@ -46,7 +46,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
     actor_rollout_ref.rollout.free_cache_engine=True  \
     actor_rollout_ref.rollout.enforce_eager=False \
-    actor_rollout_ref.rollout.n=5 \
+    actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.multi_turn.format="hermes" \
     actor_rollout_ref.rollout.over_sample_rate=0.1 \
     actor_rollout_ref.rollout.mode=async \
@@ -58,8 +58,8 @@ python3 -m vseek.trainer.main_ppo \
     trainer.critic_warmup=0 \
     trainer.logger='["console","wandb"]' \
     trainer.project_name='vseek' \
-    trainer.experiment_name='qwen3-4bt_vl_lvb-emreward-vllm-wtool-tag' \
-    trainer.n_gpus_per_node=5 \
+    trainer.experiment_name='qwen3-4bt_vl_lvb-emreward-vllm-wtool-tag-test' \
+    trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq=20 \
     trainer.test_freq=10 \
@@ -69,6 +69,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.rollout.agent.agent_loop_config_path="src/vseek/config/retriever/vllm_agent.yaml" \
     actor_rollout_ref.rollout.agent.default_agent_loop="vseek_tag_agent" \
     trainer.total_epochs=50 \
+    trainer.val_only=True \
     trainer.val_before_train=True \
     trainer.log_val_generations=20
 
