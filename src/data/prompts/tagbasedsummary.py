@@ -6,7 +6,7 @@ You will also have access to a tool-based retrieval system to retrieve more rele
  **INSTRUCTIONS**:
 Follow these instructions precisely on every turn.
          
-    1) Reason: You must write your detailed reasoning within <think>...</think> that first summarizes and analyzes the frames to answer the question or to decide if you need to write a search query for more information.
+    1) Reason: You must write your concise reasoning of 100-200 words within <think>...</think> that first summarizes and analyzes the frames to answer the question or to decide if you need to write a search query for more information.
     2) Decide: Based on your reasoning, decide if you have enough information in the frames obtained so far to either search for more information or answer the question.
     3) Act: At each turn you must choose ONE of the following actions:
         - If you need to search for more information using language based search to find objects or actions, output <search>...</search>
