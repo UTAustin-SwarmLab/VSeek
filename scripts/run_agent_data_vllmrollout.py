@@ -163,6 +163,7 @@ def rollout_agent_data(
     shuffle_seed: int,
     topk: int,
     prompt_type: str,
+    hf_local_model_path: str,
 ):
     ray.init(
         runtime_env={
@@ -186,7 +187,7 @@ def rollout_agent_data(
     tensor_parallel_size = 1
     local_model_path = os.path.expanduser(local_model_path)
     # get tokenizer for model
-    tokenizer = AutoTokenizer.from_pretrained(local_model_path)
+    tokenizer = AutoTokenizer.from_pretrained(hf_local_model_path)
 
     # Rank-aware loading and optional limiting
     examples = _load_lvb_examples(
@@ -256,6 +257,7 @@ def rollout_agent_data(
     rollout_config.actor_rollout_ref.rollout.multi_turn.tool_config_path = "./scripts/tests/agent/test_config.yaml"
     rollout_config.actor_rollout_ref.rollout.multi_turn.max_tool_response_length = 1024
     rollout_config.actor_rollout_ref.rollout.max_num_batched_tokens = 65536
+    rollout_config.actor_rollout_ref.rollout.temperature = 0.0
     rollout_config.actor_rollout_ref.rollout.n = 1
 
     rollout_config.actor_rollout_ref.rollout.agent.num_workers = 1
@@ -268,7 +270,7 @@ def rollout_agent_data(
     rollout_config.actor_rollout_ref.model.path = local_model_path
     rollout_config.actor_rollout_ref.rollout.multi_turn.format = "hermes"
     rollout_config.actor_rollout_ref.rollout.gpu_memory_utilization = 0.7
-    model_config = HFModelConfig(path=local_model_path)
+    # model_config = HFModelConfig(path=hf_local_model_path)
     
     
     rollout_config.actor_rollout_ref.rollout.agent.agent_loop_config_path = "./scripts/tests/agent/test_agent.yaml"
@@ -373,6 +375,7 @@ if __name__ == "__main__":
     parser.add_argument("--global_count", action="store_true", help="Interpret --count as global across all ranks")
     parser.add_argument("--shuffle_seed", type=int, default=42, help="Shuffle seed before sharding")
     parser.add_argument("--local_model_path", default="Qwen/Qwen2.5-VL-7B-Instruct", help="Path to local model")
+    parser.add_argument("--hf_local_model_path", default=None, help="Path to local model")
     parser.add_argument("--max_prompt_length", type=int, default=2048, help="Max prompt length")
     parser.add_argument("--max_response_length", type=int, default=10240, help="Max response length")
     parser.add_argument("--batch_size", type=int, default=4, help="Minibatch size for decoding")
@@ -383,7 +386,9 @@ if __name__ == "__main__":
     parser.add_argument("--prompt_type", type=str, default="tag", help="Prompt type: tag or openai")
     args = parser.parse_args()
 
-
+    if args.hf_local_model_path is None:
+        args.hf_local_model_path = args.local_model_path
+        
     rollout_agent_data(
         parquet_path=args.parquet,
         local_model_path=args.local_model_path,
@@ -398,4 +403,5 @@ if __name__ == "__main__":
         shuffle_seed=args.shuffle_seed,
         topk=args.topk,
         prompt_type=args.prompt_type,
+        hf_local_model_path=args.hf_local_model_path,
     )
