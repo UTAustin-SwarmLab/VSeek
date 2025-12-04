@@ -64,6 +64,7 @@ if __name__ == "__main__":
     parser.add_argument("--burned_path", required=True, help="Root path to LVB burned data directory.")
     parser.add_argument("--index_path", default=None, help="Root path to precomputed VideoFrames index.")
     parser.add_argument("--window_size", type=int, default=8, help="Window size used in VideoFrames index.")
+    parser.add_argument("--max_frames_per_turn", type=int, default=16, help="Maximum number of frames per turn.")
     parser.add_argument("--embed_frames", action="store_true", help="Embed base64 frames per window into parquet rows.")
     parser.add_argument("--thumb_max_side", type=int, default=224, help="Max side for thumbnail resize.")
     parser.add_argument("--thumb_quality", type=int, default=85, help="JPEG quality for thumbnails (1-100).")
@@ -81,8 +82,10 @@ if __name__ == "__main__":
     cfg: DictConfig = OmegaConf.create(
         {
             "dataset": {
-                "dataset_path": local_dataset_path,
-                "burned_path": burned_path,
+                "lvb": {
+                    "dataset_path": local_dataset_path,
+                    "burned_path": burned_path,
+                },
             },
             "retriever": {
                 "index_path": args.index_path,
@@ -119,7 +122,37 @@ if __name__ == "__main__":
     else:
         raise ValueError(f"Invalid index path or embed frames is not enabled: {args.index_path} or {args.embed_frames}")
     for idx, entry in tqdm(enumerate(raw_entries), desc="Processing LVB entries"):
+        encoded_video_summary = None
+        frames_by_window = None
+
+        if data_root is not None:
+            try:
+                video_id = entry.get("metadata", {}).get("video_id")
+                vf_path = os.path.join(data_root, str(video_id))
+                video_frames = VideoFrames.load(vf_path)
+                
+                frames_by_window_list = []
+                for window_idx in video_frames.frames_by_window.keys():
+                    chunk = video_frames.get_frame_chunk(window_idx)
+                    encoded = [_encode_frame(f, args.thumb_max_side, args.thumb_quality) for f in chunk]
+                    frames_by_window_list.append({"window_idx": window_idx, "encoded_frames": encoded})
+                
+                frames_by_window = frames_by_window_list
+
+                # video summary is uniformly sampled frames
+                video_summary = video_frames.uniformly_sample_frames(args.max_frames_per_turn)
+                encoded_video_summary = [_encode_frame(f, args.thumb_max_side, args.thumb_quality) for f in video_summary]
+                
+                print(f"Encoded video summary: {len(encoded_video_summary)}")
+                print(f"Encoded {len(frames_by_window)} frames for video {video_id}")
+                print(f"Total video length: {len(video_frames.all_frames)}")
+                print(f"Total video windows: {len(video_frames.frames_by_window)}")
+            except Exception:
+                print(f"Error processing video {entry.get('metadata', {}).get('video_id')}")
+                print(traceback.format_exc())
+        
         messages = build_prompt(args, entry)
+        
         correct_choice = entry.get("correct_choice", None)
         row = {
             "data_source": data_source,
@@ -127,7 +160,6 @@ if __name__ == "__main__":
             "ability": "video_reasoning",
             # Simple rule-based reward: exact match on option index as string
             "reward_model": {"style": "exact_match", "ground_truth": str(correct_choice) if correct_choice is not None else None},
-
             "extra_info": {
                 "index": idx,
                 "question": entry.get("question", ""),
@@ -144,43 +176,16 @@ if __name__ == "__main__":
                         "execute_kwargs": {
                             "topk": 4,
                             "video_id": entry.get("metadata", {}).get("video_id"),
+                            "dataset": "lvb",
                         },
                     },
                 },
             },
         }
-        # Optionally embed precomputed frames per window for this video
-        print(f"data_root: {data_root}")
-        if data_root is not None:
-            try:
-                video_id = entry.get("metadata", {}).get("video_id")
-                vf_path = os.path.join(data_root, str(video_id))
-                video_frames = VideoFrames.load(vf_path)
-                frames_by_window = []
-                for window_idx in video_frames.frames_by_window.keys():
-                    chunk = video_frames.get_frame_chunk(window_idx)
-                    encoded = [_encode_frame(f, args.thumb_max_side, args.thumb_quality) for f in chunk]
-                    frames_by_window.append({"window_idx": window_idx, "encoded_frames": encoded})
 
-                row["extra_info"].setdefault("precomputed_frames", [])
-                row["extra_info"]["precomputed_frames"] = frames_by_window
-                
-                row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["precomputed_frames"] = frames_by_window
-                
-                # video summary is uniformly sampled frames
-                video_summary = video_frames.uniformly_sample_frames(args.window_size)
-                encoded_video_summary = [_encode_frame(f, args.thumb_max_side, args.thumb_quality) for f in video_summary]
-                row["extra_info"]["tools_kwargs"]["video_search"]["create_kwargs"] = {
-                    "video_summary": encoded_video_summary,
-                }
-                print(f"Encoded video summary: {len(encoded_video_summary)}")
-                print(f"Encoded {len(frames_by_window)} frames for video {video_id}")
-                print(f"Total video length: {len(video_frames.all_frames)}")
-                print(f"Total video windows: {len(video_frames.frames_by_window)}")
-                # Ensure Arrow-friendly keys
-            except Exception:
-                print(f"Error processing video {video_id}")
-                print(traceback.format_exc())
+        if frames_by_window:
+            row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["precomputed_frames"] = frames_by_window
+            row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["video_summary"] = encoded_video_summary
 
         processed_rows.append(row)
 

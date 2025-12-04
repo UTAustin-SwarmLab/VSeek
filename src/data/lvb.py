@@ -117,8 +117,8 @@ class LongVideoBench(Manager):
     def __init__(self, cfg: DictConfig | None = None):
         
         self.cfg = cfg
-        self._dataset_path = cfg.dataset.dataset_path 
-        self._burned_path = cfg.dataset.burned_path 
+        self._dataset_path = cfg.dataset.lvb.dataset_path 
+        self._burned_path = cfg.dataset.lvb.burned_path 
         self._nsvs_path = (
             "/nas/mars/experiment_result/nsvqa/5_full_output/longvideobench_output.json"
         )
