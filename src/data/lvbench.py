@@ -37,7 +37,7 @@ class LVBench(Manager):
             cfg: Hydra DictConfig with dataset and retriever configuration
         """
         self.cfg = cfg
-        self._dataset_path = cfg.dataset.dataset_path
+        self._dataset_path = cfg.dataset.lvbench.dataset_path
         
     def load_data(self):
         """
@@ -171,7 +171,7 @@ class LVBench(Manager):
                     },
                     "metadata": {
                         "video_id": video_id,
-                        "id": item.get("id", video_id),
+                        "id": item.get("uid", video_id),
                         "question_category": category,
                         "level": item.get("level", item.get("difficulty", "medium")),
                         "duration": item.get("duration", 0),

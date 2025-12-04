@@ -113,8 +113,8 @@ class VideoMME(Manager):
             cfg: Hydra DictConfig with dataset and retriever configuration
         """
         self.cfg = cfg
-        self._dataset_path = cfg.dataset.dataset_path
-        self._burned_path = cfg.dataset.burned_path
+        self._dataset_path = cfg.dataset.videomme.dataset_path
+        self._burned_path = cfg.dataset.videomme.burned_path
         
     def load_data(self):
         """
@@ -217,7 +217,7 @@ class VideoMME(Manager):
                     },
                     "metadata": {
                         "video_id": video_id,
-                        "id": item.get("id", video_id),
+                        "id": item.get("question_id", video_id),
                         "question_category": category,
                         "level": item.get("level", item.get("difficulty", "medium")),
                         "duration": item.get("duration", 0),

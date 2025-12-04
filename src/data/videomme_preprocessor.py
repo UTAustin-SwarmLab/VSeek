@@ -27,12 +27,8 @@ import base64
 from verl.utils.hdfs_io import copy, makedirs
 from data.videomme import VideoMME
 from vseek.data.frame import VideoFrames
-from data.prompts.prompts import tagbased, openaitooluse
+from data.prompts.prompts import tagbased, openaitooluse, tagbasedsummary
 
-try:
-    from data.prompts.tagbasedsummary import tagbasedsummary
-except ImportError:
-    tagbasedsummary = None
 
 
 def build_prompt(args, entry: dict) -> list[dict]:
@@ -42,7 +38,7 @@ def build_prompt(args, entry: dict) -> list[dict]:
     paths: dict = entry.get("paths", {})
     
     # Compose user message with embedded tool resources
-    options_block = "".join([f"\n{idx}) {opt}" for idx, opt in enumerate(candidates)]) if candidates else ""
+    options_block = "".join([f"\n{opt}" for idx, opt in enumerate(candidates)]) if candidates else ""
     resources = {
         "raw_video_path": paths.get("raw_video_path"),
         "subtitle_path": paths.get("subtitle_path"),
@@ -57,8 +53,6 @@ def build_prompt(args, entry: dict) -> list[dict]:
     elif args.prompt_type == "openai":
         system_prompt = openaitooluse.system_prompt
     elif args.prompt_type == "tagsummary":
-        if tagbasedsummary is None:
-            raise ValueError("tagbasedsummary prompt not available")
         system_prompt = tagbasedsummary.system_prompt
     else:
         raise ValueError(f"Invalid prompt type: {args.prompt_type}")
@@ -191,8 +185,10 @@ if __name__ == "__main__":
     # Create config for VideoMME loader
     cfg: DictConfig = OmegaConf.create({
         "dataset": {
-            "dataset_path": local_dataset_path,
-            "burned_path": args.burned_path,
+            "videomme": {
+                "dataset_path": local_dataset_path,
+                "burned_path": args.burned_path,
+            },
         },
         "retriever": {
             "window_size": args.window_size,
@@ -260,6 +256,7 @@ if __name__ == "__main__":
                             "execute_kwargs": {
                                 "topk": 4,
                                 "video_id": entry.get("metadata", {}).get("video_id"),
+                                "dataset": "videomme",
                             },
                         },
                     },

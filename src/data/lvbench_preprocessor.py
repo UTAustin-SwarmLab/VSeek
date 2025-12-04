@@ -27,12 +27,7 @@ import base64
 from verl.utils.hdfs_io import copy, makedirs
 from data.lvbench import LVBench
 from vseek.data.frame import VideoFrames
-from data.prompts.prompts import tagbased, openaitooluse
-
-try:
-    from data.prompts.tagbasedsummary import tagbasedsummary
-except ImportError:
-    tagbasedsummary = None
+from data.prompts.prompts import tagbased, openaitooluse, tagbasedsummary
 
 
 def build_prompt(args, entry: dict) -> list[dict]:
@@ -42,7 +37,7 @@ def build_prompt(args, entry: dict) -> list[dict]:
     paths: dict = entry.get("paths", {})
     
     # Compose user message with embedded tool resources
-    options_block = "".join([f"\n{idx}) {opt}" for idx, opt in enumerate(candidates)]) if candidates else ""
+    options_block = "".join([f"\n{opt}" for idx, opt in enumerate(candidates)]) if candidates else ""
     resources = {
         "raw_video_path": paths.get("raw_video_path"),
         "subtitle_path": paths.get("subtitle_path"),
@@ -56,8 +51,6 @@ def build_prompt(args, entry: dict) -> list[dict]:
     elif args.prompt_type == "openai":
         system_prompt = openaitooluse.system_prompt
     elif args.prompt_type == "tagsummary":
-        if tagbasedsummary is None:
-            raise ValueError("tagbasedsummary prompt not available")
         system_prompt = tagbasedsummary.system_prompt
     else:
         raise ValueError(f"Invalid prompt type: {args.prompt_type}")
@@ -166,7 +159,12 @@ if __name__ == "__main__":
         default="tag",
         help="Prompt type: tag or openai or tagsummary"
     )
-
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=50,
+        help="Number of rows to accumulate before writing to disk (for memory management)"
+    )
     parser.add_argument(
         "--gpu_number",
         type=int,
@@ -191,8 +189,10 @@ if __name__ == "__main__":
     # Create config for LVBench loader
     cfg: DictConfig = OmegaConf.create({
         "dataset": {
-            "dataset_path": local_dataset_path,
-            "burned_path": args.burned_path,
+            "lvbench": {
+                "dataset_path": local_dataset_path,
+                "burned_path": args.burned_path,
+            },
         },
         "retriever": {
             "window_size": args.window_size,
@@ -260,6 +260,7 @@ if __name__ == "__main__":
                         "execute_kwargs": {
                             "topk": 4,
                             "video_id": entry.get("metadata", {}).get("video_id"),
+                            "dataset": "lvbench",
                             },
                         },
                     },
@@ -278,7 +279,7 @@ if __name__ == "__main__":
                             video_frames = VideoFrames.load(vf_path)
                             cached_ids.append(vf_path)
                         
-                        if len(cached_ids) > 10:
+                        if len(cached_ids) > 2:
                             pop_id = cached_ids.pop(0)
                             del cached_video_frames[pop_id]
                             
@@ -336,41 +337,124 @@ if __name__ == "__main__":
 
     print(f"Processed {len(processed_rows)} rows")
 
-    # Train/test split
+    # Setup output paths
+    output_dir = os.path.join(local_save_dir, f"window_{args.window_size}", args.prompt_type)
+    os.makedirs(output_dir, exist_ok=True)
+
+    train_path_new = os.path.join(output_dir, "train.parquet")
+    test_path_new = os.path.join(output_dir, "test.parquet")
+
+    # Pre-determine train/test split
     random.seed(args.seed)
     indices = list(range(len(processed_rows)))
     random.shuffle(indices)
     split_point = int(len(indices) * args.train_ratio)
-    train_idx = set(indices[:split_point])
+    train_idx_set = set(indices[:split_point])
 
-    train_rows = [processed_rows[i] for i in range(len(processed_rows)) if i in train_idx]
-    test_rows = [processed_rows[i] for i in range(len(processed_rows)) if i not in train_idx]
+    # Process and write in batches to avoid memory issues
+    train_batch = []
+    test_batch = []
+    train_count = 0
+    test_count = 0
+    train_batch_num = 0
+    test_batch_num = 0
+    
+    # Temporary directory for batch files
+    temp_dir = os.path.join(output_dir, "temp_batches")
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    train_batch_files = []
+    test_batch_files = []
+    
+    print("Writing processed rows to parquet files in batches...")
+    for i, row in enumerate(tqdm(processed_rows, desc="Writing to parquet")):
+        # Tag split
+        if i in train_idx_set:
+            row["extra_info"]["split"] = "train"
+            train_batch.append(row)
+            train_count += 1
+            
+            # Write batch when it reaches batch_size
+            if len(train_batch) >= args.batch_size:
+                batch_path = os.path.join(temp_dir, f"train_batch_{train_batch_num}.parquet")
+                batch_ds = datasets.Dataset.from_list(train_batch)
+                batch_ds.to_parquet(batch_path)
+                train_batch_files.append(batch_path)
+                train_batch_num += 1
+                train_batch = []  # Clear batch
+        else:
+            row["extra_info"]["split"] = "test"
+            test_batch.append(row)
+            test_count += 1
+            
+            # Write batch when it reaches batch_size
+            if len(test_batch) >= args.batch_size:
+                batch_path = os.path.join(temp_dir, f"test_batch_{test_batch_num}.parquet")
+                batch_ds = datasets.Dataset.from_list(test_batch)
+                batch_ds.to_parquet(batch_path)
+                test_batch_files.append(batch_path)
+                test_batch_num += 1
+                test_batch = []  # Clear batch
+    
+    # Write remaining rows
+    if train_batch:
+        batch_path = os.path.join(temp_dir, f"train_batch_{train_batch_num}.parquet")
+        batch_ds = datasets.Dataset.from_list(train_batch)
+        batch_ds.to_parquet(batch_path)
+        train_batch_files.append(batch_path)
+    
+    if test_batch:
+        batch_path = os.path.join(temp_dir, f"test_batch_{test_batch_num}.parquet")
+        batch_ds = datasets.Dataset.from_list(test_batch)
+        batch_ds.to_parquet(batch_path)
+        test_batch_files.append(batch_path)
+    
+    # Concatenate all batch files into final parquet files
+    print("\nConcatenating train batches...")
+    if train_batch_files:
+        train_datasets = [datasets.Dataset.from_parquet(f) for f in train_batch_files]
+        final_train_ds = datasets.concatenate_datasets(train_datasets)
+        final_train_ds.to_parquet(train_path_new)
+        del train_datasets, final_train_ds
+    
+    print("Concatenating test batches...")
+    if test_batch_files:
+        test_datasets = [datasets.Dataset.from_parquet(f) for f in test_batch_files]
+        final_test_ds = datasets.concatenate_datasets(test_datasets)
+        final_test_ds.to_parquet(test_path_new)
+        del test_datasets, final_test_ds
+    
+    # Clean up temporary batch files
+    print("Cleaning up temporary files...")
+    shutil.rmtree(temp_dir)
+    
+    print(f"\nTrain split: {train_count} rows")
+    print(f"Test split: {test_count} rows")
+    
+    # Merge with existing parquet files if they exist
+    # if os.path.exists(train_path):
+    #     print(f"Merging with existing train data...")
+    #     # Read both old and new, then combine
+    #     old_train = datasets.Dataset.from_parquet(train_path)
+    #     new_train = datasets.Dataset.from_parquet(train_path_new)
+    #     combined_train = datasets.concatenate_datasets([old_train, new_train])
+    #     combined_train.to_parquet(train_path)
+    #     os.remove(train_path_new)
+    # elif os.path.exists(train_path_new):
+    #     os.rename(train_path_new, train_path)
+    
+    # if os.path.exists(test_path):
+    #     print(f"Merging with existing test data...")
+    #     old_test = datasets.Dataset.from_parquet(test_path)
+    #     new_test = datasets.Dataset.from_parquet(test_path_new)
+    #     combined_test = datasets.concatenate_datasets([old_test, new_test])
+    #     combined_test.to_parquet(test_path)
+    #     os.remove(test_path_new)
+    # elif os.path.exists(test_path_new):
+    #     os.rename(test_path_new, test_path)
 
-    # Tag split in extra_info
-    for r in train_rows:
-        r["extra_info"]["split"] = "train"
-    for r in test_rows:
-        r["extra_info"]["split"] = "test"
-
-    print(f"Train split: {len(train_rows)} rows")
-    print(f"Test split: {len(test_rows)} rows")
-
-    # Create datasets
-    train_ds = datasets.Dataset.from_list(train_rows)
-    test_ds = datasets.Dataset.from_list(test_rows) if test_rows else datasets.Dataset.from_list([])
-
-    # Save parquet files
-    output_dir = os.path.join(local_save_dir, f"window_{args.window_size}", args.prompt_type)
-    os.makedirs(output_dir, exist_ok=True)
-
-    train_path = os.path.join(output_dir, "train.parquet")
-    test_path = os.path.join(output_dir, "test.parquet")
-
-    train_ds.to_parquet(train_path)
-    test_ds.to_parquet(test_path)
-
-    print(f"\nSaved train parquet to: {train_path}")
-    print(f"Saved test parquet to: {test_path}")
+    print(f"\nSaved train parquet to: {train_path_new}")
+    print(f"Saved test parquet to: {test_path_new}")
 
 # Copy to HDFS if specified
 if args.hdfs_dir is not None:
