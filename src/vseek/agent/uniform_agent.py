@@ -30,7 +30,7 @@ class UniformSampleAgent(LocalVLLMBase):
             quality=self.image_quality,
         )
 
-    def run(self, data_input: DataInput) -> ReasoningTrajectory:
+    async def run(self, data_input: DataInput) -> ReasoningTrajectory:
         # Prefer native video pathway if available; otherwise fall back to frames-as-images.
         # video_path = getattr(data_input.video, "video_path", None)
         video_path = None
@@ -64,7 +64,7 @@ class UniformSampleAgent(LocalVLLMBase):
                 ]},
             ]
 
-            content = self.generate_text(messages)
+            content = await self.generate_text(messages)
             # content = data["choices"][0]["message"]["content"]
             # user_content = [
             #     {"type": "text", "text": f"Question: {data_input.question} Options: {data_input.options}"},
@@ -103,7 +103,7 @@ class UniformSampleAgent(LocalVLLMBase):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ]
-            content = self.generate_text(messages)
+            content = await self.generate_text(messages)
             # content = chat_response.choices[0].message.content
 
         # agent_output = parse_response_with_regex(content)
