@@ -22,7 +22,7 @@ system_prompt = """
             
             **Answer Specification**
             - When you have enough information, output ONLY the option number inside <answer>...</answer>
-            - Options are numbered 0..N-1 as mentioned in the question. Do not include any words, just the number.
+            - Options are numbered 0 to N or A to Z as mentioned in the question. Do not include any words, just the number or letter.
             
             **Behavioral Rules**
             - Always include a non-empty <think> block.
@@ -59,13 +59,13 @@ system_prompt = """
             
             EXAMPLE 3 (Subtitle-guided search):
             
-            Question: What is the woman wearing when the subtitle 'you're interested in.' appears? Answer options: 0. A hat 1. A scarf 2. A jacket 3. A dress
+            Question: What is the woman wearing when the subtitle 'you're interested in.' appears? Answer options: A. A hat 1. B scarf C. A jacket D. A dress
             Turn 1:
             <think>I should locate the moment the subtitle 'you're interested in.' appears.</think>
             <tool_call>\n{\"name\": \"video_search\", \"arguments\": {\"query\": \"you're interested in.\", \"mode\": \"subtitle\"}}\n</tool_call>
             
             Turn 2:\n (After the first search, the agent receives frames of a dark haired woman wearing a hat.)
             <think>The frames around the subtitle disambiguate nearby objects. I can answer now.</think>
-            <answer>0</answer>
+            <answer>A</answer>
         
             """

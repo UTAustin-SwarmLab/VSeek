@@ -129,6 +129,12 @@ if __name__ == "__main__":
         help="Window size for VideoFrames index."
     )
     parser.add_argument(
+        "--max_frames_per_turn",
+        type=int,
+        default=16,
+        help="Maximum number of frames per turn."
+    )
+    parser.add_argument(
         "--retrieval_model_path",
         type=str,
         default=None,
@@ -301,7 +307,7 @@ if __name__ == "__main__":
                                     "encoded_frames": encoded
                                 })
                             
-                                video_summary = video_frames.uniformly_sample_frames(args.window_size)
+                                video_summary = video_frames.uniformly_sample_frames(args.max_frames_per_turn)
                                 encoded_video_summary = [
                                     _encode_frame(f, args.thumb_max_side, args.thumb_quality)
                                     for f in video_summary
@@ -310,15 +316,9 @@ if __name__ == "__main__":
                                     "frames_by_window": frames_by_window,
                                     "video_summary": encoded_video_summary,
                                 }
-
-                        row["extra_info"].setdefault("precomputed_frames", [])
-                        row["extra_info"]["precomputed_frames"] = frames_by_window
                         row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["precomputed_frames"] = frames_by_window
-                        
-                        # Video summary is uniformly sampled frames
-                        row["extra_info"]["tools_kwargs"]["video_search"]["create_kwargs"] = {
-                            "video_summary": encoded_video_summary,
-                        }
+                        row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["video_summary"] = encoded_video_summary
+
                         
                         print(f"Encoded video summary: {len(encoded_video_summary)}")
                         print(f"Encoded {len(frames_by_window)} frames for video {video_id}")

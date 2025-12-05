@@ -37,7 +37,7 @@ class MLVU(Manager):
             cfg: Hydra DictConfig with dataset and retriever configuration
         """
         self.cfg = cfg
-        self._dataset_path = cfg.dataset.dataset_path
+        self._dataset_path = cfg.dataset.mlvu.dataset_path
         self._categories = [
             "1_plotQA",
             "2_needle",
