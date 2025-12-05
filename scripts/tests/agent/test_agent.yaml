@@ -4,5 +4,12 @@
     - "<search>(.*?)</search>"
     - "<search_subtitle>(.*?)</search_subtitle>"
 
+- name: vseek_tag_summary_agent
+  _target_: src.vseek.agent.vllm_rollout.VSeekTagSummaryAgentLoop
+  tags:
+    - "<search>(.*?)</search>"
+    - "<search_subtitle>(.*?)</search_subtitle>"
+    - "<search_summary>(.*?)</search_summary>"
+
 - name: vseek_json_agent
   _target_: src.vseek.agent.vllm_rollout.VSeekJSONAgentLoop
