@@ -1,8 +1,12 @@
 import os
 from typing import Any, Dict, List
+import uuid
+import asyncio
 
 from transformers import AutoProcessor
-from vllm import LLM, SamplingParams
+from vllm import SamplingParams
+from vllm.engine.async_llm_engine import AsyncLLMEngine
+from vllm.engine.arg_utils import AsyncEngineArgs
 import cv2
 import base64
 
@@ -22,12 +26,12 @@ class LocalVLLMBase:
         self.thinking_enabled = getattr(config.inference, "thinking_enabled", True)
         # Processor and LLM
         self.processor = AutoProcessor.from_pretrained(self.model_path, trust_remote_code=True)
-        self.llm = LLM(
+        
+        engine_args = AsyncEngineArgs(
             model=self.model_path,
             tensor_parallel_size=1,
             gpu_memory_utilization=0.8,
             enforce_eager=True,
-            limit_mm_per_prompt={"video": 1},
             mm_processor_kwargs={
                 "max_pixels": int(self.max_image_width) * int(self.max_image_height),
                 "nframes": int(self.max_images),
@@ -35,6 +39,9 @@ class LocalVLLMBase:
             },
             trust_remote_code=True,
         )
+        
+        self.llm = AsyncLLMEngine.from_engine_args(engine_args)
+        
         self.sampling_params = SamplingParams(
             temperature=max(0.0, self.temperature),
             top_p=0.001,
@@ -58,15 +65,66 @@ class LocalVLLMBase:
             mm_data["video"] = video_inputs
         return prompt, mm_data, video_kwargs
 
-    def generate_text(self, messages: List[Dict[str, Any]]) -> str:
+    async def generate_text(self, messages: List[Dict[str, Any]]) -> str:
         prompt, mm_data, video_kwargs = self.build_prompt_and_mm(messages)
-        llm_inputs = {
-            "prompt": prompt,
-            "multi_modal_data": mm_data,
-            "mm_processor_kwargs": video_kwargs,
-        }
-        outputs = self.llm.generate([llm_inputs], sampling_params=self.sampling_params)
-        return outputs[0].outputs[0].text
+        
+        request_id = str(uuid.uuid4())
+        
+        # Prepare arguments for AsyncLLMEngine.generate
+        # We pass prompt, sampling_params, request_id, and optionally multi_modal_data
+        
+        kwargs = {}
+        # Only pass multi_modal_data if it's not empty, to avoid issues if the engine doesn't support it when None
+        if mm_data:
+            # Note: Some vLLM versions might expect 'inputs' dict instead of 'prompt' + 'multi_modal_data'
+            # But since 'inputs' kwarg failed, we try explicit args.
+            # If this fails, we might need to check vLLM version or use inputs positional arg.
+            kwargs["multi_modal_data"] = mm_data
+        
+        if video_kwargs:
+            kwargs["mm_processor_kwargs"] = video_kwargs
+
+        try:
+            results_generator = self.llm.generate(
+                prompt=prompt,
+                sampling_params=self.sampling_params,
+                request_id=request_id,
+                **kwargs
+            )
+        except TypeError as e:
+            # Fallback: try passing prompt as positional argument if keyword fails
+            # or if inputs is expected as positional
+            if "multi_modal_data" in str(e) or "mm_processor_kwargs" in str(e):
+                 # If kwargs are not supported, try passing inputs dict as positional prompt
+                 # This works in some vLLM versions where the first arg 'inputs' can be a dict
+                 inputs_dict = {"prompt": prompt}
+                 if mm_data:
+                     inputs_dict["multi_modal_data"] = mm_data
+                 if video_kwargs:
+                     inputs_dict["mm_processor_kwargs"] = video_kwargs
+                 
+                 results_generator = self.llm.generate(
+                    inputs_dict,
+                    self.sampling_params,
+                    request_id,
+                )
+            elif "inputs" in str(e) or "prompt" in str(e):
+                 # Construct inputs dict if that's what it wants (but passed positionally?)
+                 # Or just pass prompt positionally
+                 results_generator = self.llm.generate(
+                    prompt,
+                    self.sampling_params,
+                    request_id,
+                    **kwargs
+                )
+            else:
+                raise e
+        
+        final_output = None
+        async for request_output in results_generator:
+            final_output = request_output
+            
+        return final_output.outputs[0].text
     
     def _encode_frame(self, frame, max_width=512, max_height=512, quality=85):
         # Resize frame to reduce aspect ratio and make it easier to parse
