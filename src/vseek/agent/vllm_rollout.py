@@ -200,6 +200,9 @@ class _VSeekTagToolParser(ToolParser):
                     mode = "subtitle"
                 elif "<search>" in tag_str:
                     mode = "base"
+                elif "<search_summary>" in tag_str:
+                    query = "summary"
+                    mode = "summary"
                 arguments = json.dumps({"query": query, "mode": mode}, ensure_ascii=False)
                 function_calls.append(FunctionCall(name="video_search", arguments=arguments))
                 cleaned_text = pattern.sub("", cleaned_text)
@@ -273,19 +276,32 @@ class _VSeekJSONToolParser(ToolParser):
 
         return cleaned_text, function_calls
 
-
 @register("vseek_tag_agent")
 class VSeekTagAgentLoop(VSeekToolAgentLoop):
     @classmethod
     def init_class(cls, config, tokenizer, processor, **kwargs):
         super().init_class(config, tokenizer, processor, **kwargs)
+        print("Initializing tag agent")
         tags: list[str] = kwargs.get(
             "tags",
             [r"<search>(.*?)</search>", r"<search_subtitle>(.*?)</search_subtitle>"],
         )
+        print(f"Tags: {tags}")
         cls.tool_parser = _VSeekTagToolParser(tokenizer, tags)
 
-
+@register("vseek_tag_summary_agent")
+class VSeekTagSummaryAgentLoop(VSeekToolAgentLoop):
+    @classmethod
+    def init_class(cls, config, tokenizer, processor, **kwargs):
+        super().init_class(config, tokenizer, processor, **kwargs)
+        print("Initializing tag summary agent")
+        tags: list[str] = kwargs.get(
+            "tags",
+            [r"<search>(.*?)</search>", r"<search_subtitle>(.*?)</search_subtitle>", r"<search_summary>(.*?)</search_summary>"],
+        )
+        print(f"Tags: {tags}")
+        cls.tool_parser = _VSeekTagToolParser(tokenizer, tags)
+        
 @register("vseek_json_agent")
 class VSeekJSONAgentLoop(VSeekToolAgentLoop):
     @classmethod
