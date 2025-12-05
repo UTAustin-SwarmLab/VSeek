@@ -90,7 +90,7 @@ system_prompt= """
             
             **Answer Specification**
             - When you have enough information, output ONLY the option number inside <answer>...</answer>
-            - Options are numbered 0 to N as mentioned in the question. Do not include any words, just the number.
+    - Options are numbered 0 to N or A to Z as mentioned in the question. Do not include any words, just the number or letter.
             
             **Behavioral Rules**
             - Each turn constitues one <think> block followed by one action block (<search> OR <search_subtitle> OR <answer>) followed by a response from the tool.
@@ -132,7 +132,7 @@ system_prompt= """
             
             EXAMPLE 3 (Subtitle-guided search):
             
-            Question: What is the woman doing after the subtitle 'you're interested in.' appears? Answer options: 0. A hat 1. A scarf 2. A jacket 3. A dress
+            Question: What is the woman doing after the subtitle 'you're interested in.' appears? Answer options: A. A hat B. A scarf C. A jacket D. A dress
             
             <think>I should locate the moment the subtitle 'you're interested in.' appears.</think>
             <search_subtitle>you're interested in.</search_subtitle>
@@ -145,5 +145,5 @@ system_prompt= """
             tool 
  (After the second search, the agent receives frames of the woman wearing a hat.)
             <think>The woman is wearing a hat. I can answer now.</think>
-            <answer>0</answer>
+            <answer>A</answer>
 """

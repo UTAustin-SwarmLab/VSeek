@@ -1,34 +1,17 @@
-import os
+# An experiment with an agentic setup that populates the multi-modal data from the video as tool calls. This is to experiment with whether the tool calls itself are reponsible for poorer performance
+
 import numpy as np
 from PIL import Image
 
 from vseek.data.exp_io import DataInput
 from vseek.data.vseek_dm import ReasoningTrajectory
 from vseek.agent.base_model import LocalVLLMBase
+from vseek.agent.uniform_agent import UniformSampleAgent
 from vseek.agent.utils.parse_response import parse_response_with_regex
 
 
-class UniformSampleAgent(LocalVLLMBase):
-    def __init__(
-        self,
-        config,
-    ):
-        super().__init__(config=config)
-        self.config = config
-        self.max_image_width = config.inference.max_image_width
-        self.max_image_height = config.inference.max_image_height
-        self.image_quality = config.inference.image_quality
-        self.temperature = getattr(config.inference, "temperature", 0.0)
-        self.max_images = getattr(config.inference, "max_images_per_turn", 16)
-        self.agent_prompt_type = getattr(config.inference, "agent_prompt_type", "base")
+class ToolUniformSampleAgent(UniformSampleAgent):
 
-    def _encode_frame(self, frame):
-        return super()._encode_frame(
-            frame,
-            max_width=self.max_image_width,
-            max_height=self.max_image_height,
-            quality=self.image_quality,
-        )
 
     async def run(self, data_input: DataInput) -> ReasoningTrajectory:
         # Prefer native video pathway if available; otherwise fall back to frames-as-images.
@@ -101,7 +84,7 @@ class UniformSampleAgent(LocalVLLMBase):
             user_content.append({"type": "text", "text": f"Question: {data_input.question} Options: {data_input.options}"})
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
+                {"role": "tool", "content": user_content},
             ]
             content = await self.generate_text(messages)
             # content = chat_response.choices[0].message.content

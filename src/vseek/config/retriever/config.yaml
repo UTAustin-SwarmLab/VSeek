@@ -10,7 +10,7 @@ retriever:
   text_encoder_model_path: "/nas/mars/model_weights/viclip/bpe_simple_vocab_16e6.txt.gz"
   gpu_number: 0
   faiss_gpu: false
-  dataset_name: "lvb"
+  dataset_name: ${..dataset.name}
   window_size: 8
   desired_interval_in_sec: 1
 llm:
@@ -31,9 +31,38 @@ inference:
   gpu_number: 0
   max_output_tokens: 512
 dataset:
-  name: "lvb"
+  # Primary dataset name for single-dataset mode
+  name: "lvb"  # Options: lvb, lvbench, videomme, mlvu
+  
+  # Active datasets for multi-dataset mode (list of dataset names to use)
+  # Example: ["lvb", "lvbench", "videomme"] to use multiple datasets
+  # Set to null or [] to use only the primary dataset.name
   desired_interval_in_sec: ${retriever.desired_interval_in_sec}
   window_size: ${retriever.window_size}
-  dataset_path: "/nas/mars/dataset/longvideobench/LongVideoBench/"
-  burned_path: "/nas/mars/dataset/longvideobench/"
+  
+  # Dataset-specific configurations
+  lvb:
+    name: "lvb"
+    dataset_path: "/nas/mars/dataset/longvideobench/LongVideoBench/"
+    burned_path: "/nas/mars/dataset/longvideobench/"
+    enabled: true
+  
+  lvbench:
+    name: "lvbench"
+    dataset_path: "/nas/mars/dataset/LVBench"
+    burned_path: "/nas/mars/dataset/LVBench/videos"
+    enabled: true
+  
+  videomme:
+    name: "videomme"
+    dataset_path: "/nas/mars/dataset/Video-MME"
+    burned_path: "/nas/mars/dataset/Video-MME/burn-subtitles"
+    enabled: true
+  
+  mlvu:
+    name: "mlvu"
+    dataset_path: "/nas/mars/dataset/mlvu"
+    burned_path: "/nas/mars/dataset/mlvu"
+    enabled: true
+  
   

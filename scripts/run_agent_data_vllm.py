@@ -27,8 +27,11 @@ def parse_answer(answer: str) -> str:
         return ""
     # Try to find a number in the answer
     numbers = re.findall(r'\d+', answer)
+    letters = re.findall(r'[a-zA-Z]+', answer)
     if numbers:
         return numbers[0]  # Return the first number found
+    if letters:
+        return letters[0]  # Return the first letter found
     return ""
 
 

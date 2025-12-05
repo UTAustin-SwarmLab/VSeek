@@ -134,8 +134,11 @@ def parse_answer(answer: str) -> str:
     # Prefer content within <answer>...</answer>
     tag_matches = re.findall(r"<\s*answer\s*>([\s\S]*?)<\s*/\s*answer\s*>", answer, flags=re.IGNORECASE)
     target_text = tag_matches[-1].strip() if tag_matches else answer
+    # find numbers or letters
     numbers = re.findall(r"\d+", target_text)
-    return numbers[0] if numbers else ""
+    letters = re.findall(r"[a-zA-Z]+", target_text)
+    
+    return numbers[0] if numbers else letters[0] if letters else ""
 
 def calculate_accuracy(results: list[dict]) -> float:
     if not results:
@@ -163,6 +166,7 @@ def rollout_agent_data(
     shuffle_seed: int,
     topk: int,
     prompt_type: str,
+    hf_local_model_path: str,
 ):
     ray.init(
         runtime_env={
@@ -186,7 +190,7 @@ def rollout_agent_data(
     tensor_parallel_size = 1
     local_model_path = os.path.expanduser(local_model_path)
     # get tokenizer for model
-    tokenizer = AutoTokenizer.from_pretrained(local_model_path)
+    tokenizer = AutoTokenizer.from_pretrained(hf_local_model_path)
 
     # Rank-aware loading and optional limiting
     examples = _load_lvb_examples(
@@ -248,6 +252,14 @@ def rollout_agent_data(
         rollout_config = compose(
             config_name="lvb_grpo",
         )   
+    
+    if 'tagsummary' in args.parquet:
+        print("Using tagsummary agent")
+        rollout_config.actor_rollout_ref.rollout.agent.default_agent_loop = "vseek_tag_summary_agent"
+    else:
+        print("Using tag agent")
+        rollout_config.actor_rollout_ref.rollout.agent.default_agent_loop = "vseek_tag_agent"
+        
     rollout_config.actor_rollout_ref.rollout.name = "vllm"
     rollout_config.actor_rollout_ref.rollout.mode = "async"
     rollout_config.actor_rollout_ref.rollout.tensor_model_parallel_size = 1
@@ -256,6 +268,7 @@ def rollout_agent_data(
     rollout_config.actor_rollout_ref.rollout.multi_turn.tool_config_path = "./scripts/tests/agent/test_config.yaml"
     rollout_config.actor_rollout_ref.rollout.multi_turn.max_tool_response_length = 1024
     rollout_config.actor_rollout_ref.rollout.max_num_batched_tokens = 65536
+    rollout_config.actor_rollout_ref.rollout.temperature = 0.0
     rollout_config.actor_rollout_ref.rollout.n = 1
 
     rollout_config.actor_rollout_ref.rollout.agent.num_workers = 1
@@ -267,8 +280,8 @@ def rollout_agent_data(
     rollout_config.trainer.nnodes = 1
     rollout_config.actor_rollout_ref.model.path = local_model_path
     rollout_config.actor_rollout_ref.rollout.multi_turn.format = "hermes"
-    rollout_config.actor_rollout_ref.rollout.gpu_memory_utilization = 0.7
-    model_config = HFModelConfig(path=local_model_path)
+    rollout_config.actor_rollout_ref.rollout.gpu_memory_utilization = 0.9
+    # model_config = HFModelConfig(path=hf_local_model_path)
     
     
     rollout_config.actor_rollout_ref.rollout.agent.agent_loop_config_path = "./scripts/tests/agent/test_agent.yaml"
@@ -310,12 +323,16 @@ def rollout_agent_data(
         )
 
         messages_np = np.asarray(preencode_prompts, dtype=object)
+        if 'tagsummary' in args.parquet:
+            agent_name = "vseek_tag_summary_agent"
+        else:
+            agent_name = "vseek_tag_agent"
         dprompts = DataProto(
             batch=prompt_dict,
             non_tensor_batch={
                 "raw_prompt": messages_np,
                 "tools_kwargs": np.array(tools_kwargs_list, dtype=object),
-                "agent_name": np.array(["vseek_tag_agent"] * len(messages_np)) if prompt_type == "tag" else np.array(["vseek_json_agent"] * len(messages_np)),
+                "agent_name": np.array([agent_name] * len(messages_np)),
                 "data_source": np.array(["lvb"] * len(messages_np)),
                 "reward_model": np.array([{"style": "rule", "ground_truth": "1.0"}] * len(messages_np)),
             },
@@ -373,6 +390,7 @@ if __name__ == "__main__":
     parser.add_argument("--global_count", action="store_true", help="Interpret --count as global across all ranks")
     parser.add_argument("--shuffle_seed", type=int, default=42, help="Shuffle seed before sharding")
     parser.add_argument("--local_model_path", default="Qwen/Qwen2.5-VL-7B-Instruct", help="Path to local model")
+    parser.add_argument("--hf_local_model_path", default=None, help="Path to local model")
     parser.add_argument("--max_prompt_length", type=int, default=2048, help="Max prompt length")
     parser.add_argument("--max_response_length", type=int, default=10240, help="Max response length")
     parser.add_argument("--batch_size", type=int, default=4, help="Minibatch size for decoding")
@@ -380,10 +398,12 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", default=os.path.expanduser("~/results/sglang_runs"), help="Directory to store JSONL outputs")
     parser.add_argument("--output_prefix", default="sglang", help="Filename prefix for JSONL outputs")
     parser.add_argument("--topk", type=int, default=4, help="Top-k sampling parameter")
-    parser.add_argument("--prompt_type", type=str, default="tag", help="Prompt type: tag or openai")
+    parser.add_argument("--prompt_type", type=str, default="tag", help="Prompt type: tag or openai or tagsummary")
     args = parser.parse_args()
 
-
+    if args.hf_local_model_path is None:
+        args.hf_local_model_path = args.local_model_path
+        
     rollout_agent_data(
         parquet_path=args.parquet,
         local_model_path=args.local_model_path,
@@ -398,4 +418,5 @@ if __name__ == "__main__":
         shuffle_seed=args.shuffle_seed,
         topk=args.topk,
         prompt_type=args.prompt_type,
+        hf_local_model_path=args.hf_local_model_path,
     )
