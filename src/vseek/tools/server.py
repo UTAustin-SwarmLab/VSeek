@@ -10,6 +10,9 @@ from tqdm import tqdm
 import hydra
 from omegaconf import DictConfig
 
+from data.videomme import VideoMME
+from data.lvbench import LVBench
+from data.mlvu import MLVU
 from vseek.video_embedding.video_clip import ViClip
 from data.lvb import LongVideoBench
 from vseek.data.frame import VideoFrames
@@ -50,50 +53,75 @@ class VideoSearchServer:
             raise ValueError(f"Unsupported retriever: {self.retriever_name}")
         
         # Initialize dataset
-        if self.dataset_name == "lvb":
-            dataset = LongVideoBench(args)
-            self.entries = dataset.load_data()
-        else:
-            raise ValueError(f"Unsupported dataset: {self.dataset_name}")
+        if isinstance(self.dataset_name, str):
+            self.dataset_name = [self.dataset_name]
+        print(f"dataset_name: {self.dataset_name}")
+        self.entries = {}  
+        
+        for dataset_name in self.dataset_name:
+            if dataset_name == "lvb":
+                dataset = LongVideoBench(args)
+                self.entries[dataset_name] = dataset.load_data()
+            elif dataset_name == "videomme":
+                dataset = VideoMME(args)
+                self.entries[dataset_name] = dataset.load_data()
+            elif dataset_name == "lvbench":
+                dataset = LVBench(args)
+                self.entries[dataset_name] = dataset.load_data()
+            elif dataset_name == "mlvu":
+                dataset = MLVU(args)
+                self.entries[dataset_name] = dataset.load_data()
+            else:
+                raise ValueError(f"Unsupported dataset: {dataset_name}")
         
         # Initialize video data storage
         self.video_embeddings = {}
         self.video_subtitle_embeddings = {}
         self.video_subtitles = {}
+        for dataset_name in self.dataset_name:
+            self.video_embeddings[dataset_name] = {}
+            self.video_subtitle_embeddings[dataset_name] = {}
+            self.video_subtitles[dataset_name] = {}
+        
         
         self.init_index()
 
     def init_index(self):
         """Initialize the video index by loading embeddings and subtitles."""
-        dir_name = f"{self.dataset_name}_window_{self.window_size}"
-        data_root = Path(self.index_path).joinpath(dir_name)
-        
-        logger.info(f"Loading video index from: {data_root}")
-        
-        total_success = 0
-        for entry in tqdm(self.entries, desc="Processing LVB entries"):
-            video_id = entry["metadata"]["video_id"]
-            if video_id not in self.video_embeddings or video_id not in self.video_subtitles or video_id not in self.video_subtitle_embeddings:
-                pkl_path = data_root.joinpath(f"{video_id}")
 
-                if not pkl_path.exists():
-                    # Skip if the preprocessed frames are not available
-                    # You can generate them via LongVideoBench.save_it_as_vseek_data()
-                    logger.warning(f"Missing preprocessed frames: {pkl_path}")
-                    continue
+        
 
-                try:
-                    video_frames = VideoFrames.load(str(pkl_path))
-                    self.video_embeddings[video_id] = video_frames.embeddings
-                    self.video_subtitles[video_id] = video_frames.window_by_subtitle
-                    self.video_subtitle_embeddings[video_id] = video_frames.subtitle_embeddings
-                    logger.debug(f"Loaded video {video_id} with {len(video_frames.embeddings)} embeddings")
-                    total_success += 1
-                except Exception as e:
-                    logger.error(f"Failed to load video {video_id}: {e}")
-                    continue
-        logger.info(f"Loaded {total_success} videos")
-        logger.info(f"Loaded {len(self.video_embeddings)} videos")
+        for dataset_name in self.entries.keys():
+            total_success = 0
+            dir_name = f"{dataset_name}_window_{self.window_size}"
+            data_root = Path(self.index_path).joinpath(dir_name)
+            
+            logger.info(f"Loading video index from: {data_root}")
+            for entry in tqdm(self.entries[dataset_name], desc="Processing entries"):
+                video_id = entry["metadata"]["video_id"]
+                if video_id not in self.video_embeddings[dataset_name] or video_id not in self.video_subtitles[dataset_name] or video_id not in self.video_subtitle_embeddings[dataset_name]:
+                    pkl_path = data_root.joinpath(f"{video_id}")
+
+                    if not pkl_path.exists():
+                        # Skip if the preprocessed frames are not available
+                        # You can generate them via LongVideoBench.save_it_as_vseek_data()
+                        logger.warning(f"Missing preprocessed frames: {pkl_path}")
+                        continue
+
+                    try:
+                        video_frames = VideoFrames.load(str(pkl_path))
+                        self.video_embeddings[dataset_name][video_id] = video_frames.embeddings
+                        self.video_subtitles[dataset_name][video_id] = video_frames.window_by_subtitle
+                        self.video_subtitle_embeddings[dataset_name][video_id] = video_frames.subtitle_embeddings
+                        logger.debug(f"Loaded video {video_id} with {len(video_frames.embeddings)} embeddings")
+                        total_success += 1
+                    except Exception as e:
+                        logger.error(f"Failed to load video {video_id}: {e}")
+                        print(traceback.format_exc())
+                        continue
+            
+            logger.info(f"Loaded {total_success} videos")
+            logger.info(f"Loaded {len(self.video_embeddings[dataset_name])} videos")
 
 
     def search_video(self):
@@ -108,12 +136,13 @@ class VideoSearchServer:
                 query = request.args.get("query")
                 topk = int(request.args.get("topk", self.topk))
                 video_id = request.args.get("video_id")
+                dataset_name = request.args.get("dataset_name")
             else:  # POST
                 data = request.get_json()
                 query = data.get("query")
                 topk = data.get("topk", self.topk)
                 video_id = data.get("video_id")
-            
+                dataset_name = data.get("dataset_name")
             if not query:
                 return jsonify({"error": "Query parameter is required"}), 400
             
@@ -129,13 +158,13 @@ class VideoSearchServer:
 
             # Get embeddings for the specified video or all videos
             if video_id:
-                if video_id not in self.video_embeddings:
+                if video_id not in self.video_embeddings[dataset_name]:
                     return jsonify({"error": f"Video {video_id} not found"}), 404
-                embeddings = self.video_embeddings[video_id]
+                embeddings = self.video_embeddings[dataset_name][video_id]
             else:
                 # Search across all videos - concatenate all embeddings
                 embeddings = []
-                for vid_embeddings in self.video_embeddings.values():
+                for vid_embeddings in self.video_embeddings[dataset_name].values():
                     embeddings.extend(vid_embeddings)
 
             if not embeddings:
@@ -199,12 +228,13 @@ class VideoSearchServer:
                 query = request.args.get("query")
                 topk = int(request.args.get("topk"))
                 video_id = request.args.get("video_id")
+                dataset_name = request.args.get("dataset_name")
             else:  # POST
                 data = request.get_json()
                 query = data.get("query")
                 topk = data.get("topk")
                 video_id = data.get("video_id")
-            
+                dataset_name = data.get("dataset_name")
             if not query:
                 return jsonify({"error": "Query parameter is required"}), 400
             
@@ -223,20 +253,20 @@ class VideoSearchServer:
 
             # Get subtitles for the specified video or all videos
             if video_id:
-                if video_id not in self.video_subtitles:
+                if video_id not in self.video_subtitles[dataset_name]:
                     return jsonify({"error": f"Video {video_id} not found for subtitles"}), 404
-                subtitles = self.video_subtitles[video_id]
+                subtitles = self.video_subtitles[dataset_name][video_id]
             else:
                 # Search across all videos - concatenate all subtitles
                 subtitles = []
-                for vid_subtitles in self.video_subtitles.values():
+                for vid_subtitles in self.video_subtitles[dataset_name].values():
                     subtitles.extend(vid_subtitles)
 
             if not subtitles:
                 return jsonify({"error": "No subtitles available"}), 404
 
             # Get text embeddings for all subtitles
-            subtitle_embeddings = self.video_subtitle_embeddings[video_id]
+            subtitle_embeddings = self.video_subtitle_embeddings[dataset_name][video_id]
             logger.debug(f"Processing {len(subtitles)} subtitles")
             subtitle_embeddings_norm = []
             subtitle_embeddings_keys = []
@@ -277,7 +307,7 @@ class VideoSearchServer:
             for index in sorted_indices:
                 closest_subtitle = subtitle_embeddings_keys[index]
                 closest_subtitles.append(closest_subtitle)
-                windows_retrieved += self.video_subtitles[video_id][closest_subtitle]
+                windows_retrieved += self.video_subtitles[dataset_name][video_id][closest_subtitle]
                 windows_retrieved = list(set(windows_retrieved))
                 total_windows_retrieved = len(windows_retrieved)
                 if total_windows_retrieved >= topk:
