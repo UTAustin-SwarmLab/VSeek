@@ -143,11 +143,6 @@ class VideoSearchTool(BaseTool):
             "search_results": [],
         }
         
-        if self.video_summary:
-
-            video_summary = kwargs.get("video_summary")
-            print(f"Using video_summary: {len(kwargs.get('video_summary'))}")
-            return instance_id, ToolResponse(image=video_summary, text="The following the summary of the video.")
         return instance_id, ToolResponse()
 
     async def _search_video_frames(
@@ -155,7 +150,8 @@ class VideoSearchTool(BaseTool):
         topk: int = 5, 
         video_id: Optional[str] = None,
         search_type: str = "video_frames",
-        precomputed_frames: Optional[List[Dict[str, List[str]]]] = None) -> Tuple[List[Any], List[int], Dict[str, Any]]:
+        precomputed_frames: Optional[List[Dict[str, List[str]]]] = None,
+        dataset_name: Optional[str] = None) -> Tuple[List[Any], List[int], Dict[str, Any]]:
         """Search for relevant video frames using background server.
 
         Args:
@@ -178,7 +174,8 @@ class VideoSearchTool(BaseTool):
                     "query": query,
                     "topk": topk,
                     "search_type": search_type,
-                    "video_id": video_id
+                    "video_id": video_id,
+                    "dataset_name": dataset_name
             }
             #print(f"payload: {payload}")
             # Make async HTTP request to background server
@@ -187,7 +184,7 @@ class VideoSearchTool(BaseTool):
                 resp.raise_for_status()
                 data = resp.json()
                 frame_indices = sorted(data.get("frame_indices", []))
-            else:
+            elif search_type == "subtitles":
                 resp = requests.get(f"{self.server_url}/search_subtitle", params=payload, timeout=self.timeout)
                 resp.raise_for_status()
                 data = resp.json()
@@ -228,10 +225,10 @@ class VideoSearchTool(BaseTool):
         video_id: Optional[str] = None,
         search_type: str = "subtitles",
         precomputed_frames: Optional[Dict[str, List[str]]] = None,
-        ) -> Tuple[List[Any], List[int], Dict[str, Any]]:
+        dataset_name: Optional[str] = None) -> Tuple[List[Any], List[int], Dict[str, Any]]:
         """Search for frame indices by subtitle text."""
-        return await self._search_video_frames(subtitle, topk=topk, video_id=video_id, search_type=search_type, precomputed_frames=precomputed_frames)
-
+        return await self._search_video_frames(subtitle, topk=topk, video_id=video_id, search_type=search_type, precomputed_frames=precomputed_frames, dataset_name=dataset_name)
+        
     async def _encode_frame(self, frame, max_width=256, max_height=256, quality=85):
         # Resize frame to reduce aspect ratio and make it easier to parse
         height, width = frame.shape[:2]
@@ -279,17 +276,23 @@ class VideoSearchTool(BaseTool):
             logger.error(f"[VideoSearchTool] {error_msg} Received parameters: {parameters}")
             return ToolResponse(text=json.dumps({"error": error_msg})), 0.0, {}
 
-        if not isinstance(mode, str) or mode not in {"base", "subtitle"}:
-            error_msg = "Error: 'mode' must be 'base' or 'subtitle'."
+        if not isinstance(mode, str) or mode not in {"base", "subtitle", "summary"}:
+            error_msg = "Error: 'mode' must be 'base' or 'subtitle' or 'summary'."
             logger.error(f"[VideoSearchTool] {error_msg} Received parameters: {parameters}")
             return ToolResponse(text=json.dumps({"error": error_msg})), 0.0, {}
 
-        search_type = "video_frames" if mode == "base" else "subtitles"
+        if mode == "base":
+            search_type = "video_frames"
+        elif mode == "subtitle":
+            search_type = "subtitles"
+        elif mode == "summary":
+            search_type = "summary"
         # Maybe needs to be passed through kwargs
         # topk = kwargs.get("topk")
         video_id = kwargs.get("video_id")
         precomputed_frames = kwargs.get("precomputed_frames")
-        
+        video_summary = kwargs.get("video_summary")
+        dataset_name = kwargs.get("dataset")
         # if precomputed_frames is not None:
             #print(f"Will be using precomputed frames: {len(precomputed_frames)}")
             #print("Total frames: ", sum(len(frame["encoded_frames"]) for frame in precomputed_frames))
@@ -305,16 +308,25 @@ class VideoSearchTool(BaseTool):
                     topk=self.topk,
                     video_id=video_id,
                     search_type=search_type,
-                    precomputed_frames=precomputed_frames
+                    precomputed_frames=precomputed_frames,
+                    dataset_name=dataset_name
                 )
-            else:
+            elif search_type == "subtitles":
                 frames, frame_indices, metadata = await self._search_subtitles(
                     subtitle=query, 
                     topk=self.topk, 
                     video_id=video_id, 
                     search_type=search_type,    
-                    precomputed_frames=precomputed_frames
+                    precomputed_frames=precomputed_frames,
+                    dataset_name=dataset_name
                 )
+            elif search_type=="summary":
+                frames = video_summary
+                frame_indices = list(range(len(video_summary)))
+                metadata = {
+                    "status": "success",
+                    "search_mode": "summary",
+                }
             # Store results in instance dictionary
             self._instance_dict[instance_id]["search_results"].append({
                 "query": query,
@@ -324,7 +336,7 @@ class VideoSearchTool(BaseTool):
 
             # Prepare response
             response_data = {
-                "mode": "base" if search_type == "video_frames" else "subtitle",
+                "mode": mode,
                 "query": query,
                 "frame_indices": frame_indices,
                 "topk": self.topk,
