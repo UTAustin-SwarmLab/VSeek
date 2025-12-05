@@ -22,6 +22,7 @@ actor_rollout_ref:
       max_assistant_turns: 3
       format: qwen25
       max_tool_response_length: 1024
+    
     max_num_batched_tokens: 65536
     gpu_memory_utilization: 0.75
     max_model_len: 8192
@@ -40,7 +41,8 @@ actor_rollout_ref:
       default_agent_loop: single_turn_agent
       agent_loop_config_path: null
     engine_kwargs:
-      vllm: {}
+      vllm: 
+        mm_processor_cache_gb: 0
       sglang: {}
   actor:
     strategy: fsdp2

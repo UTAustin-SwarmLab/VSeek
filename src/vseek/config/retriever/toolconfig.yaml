@@ -27,13 +27,38 @@ tools:
       index_path: ${.retriever.index_path}
       cache_limit: 64
       max_frames_per_turn: 16
-      video_summary: false
       dataset:
-        name: "lvb"
+        # Primary dataset name for single-dataset mode
+        name: ["lvb", "lvbench", "videomme", "mlvu"] # Options: lvb, lvbench, videomme, mlvu
+        
         desired_interval_in_sec: ${..retriever.desired_interval_in_sec}
         window_size: ${..retriever.window_size}
-        dataset_path: "/nas/mars/dataset/longvideobench/LongVideoBench/"
-        burned_path: "/nas/mars/dataset/longvideobench/"
+        
+        # Dataset-specific configurations
+        lvb:
+          name: "lvb"
+          dataset_path: "/nas/mars/dataset/longvideobench/LongVideoBench/"
+          burned_path: "/nas/mars/dataset/longvideobench/"
+          enabled: true
+        
+        lvbench:
+          name: "lvbench"
+          dataset_path: "/nas/mars/dataset/LVBench"
+          burned_path: "/nas/mars/dataset/LVBench/videos"
+          enabled: true
+        
+        videomme:
+          name: "videomme"
+          dataset_path: "/nas/mars/dataset/Video-MME"
+          burned_path: "/nas/mars/dataset/Video-MME/burn-subtitles"
+          enabled: true
+        
+        mlvu:
+          name: "mlvu"
+          dataset_path: "/nas/mars/dataset/mlvu"
+          burned_path: "/nas/mars/dataset/mlvu"
+          enabled: true
+        
       retriever:
         port: 9000
         server_url: "http://127.0.0.1:${.port}"
@@ -45,7 +70,7 @@ tools:
         text_encoder_model_path: "/nas/mars/model_weights/viclip/bpe_simple_vocab_16e6.txt.gz"
         gpu_number: 0
         faiss_gpu: false
-        dataset_name: "lvb"
+        dataset_name: ${..dataset.name}
         window_size: 8
         desired_interval_in_sec: 1
     tool_schema:
