@@ -5,6 +5,7 @@ output/
 checkpoints/
 uv.lock
 wandb/
+top*
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
