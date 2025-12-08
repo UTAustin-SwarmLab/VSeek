@@ -107,11 +107,12 @@ class CLIP_TEXT(nn.Module):
         transformer_heads: int,
         transformer_layers: int,
         checkpoint_num: int,
+        tokenizer=None,
     ):
         super().__init__()
 
         self.context_length = context_length
-        self._tokenizer = _Tokenizer()
+        self._tokenizer = tokenizer if tokenizer else _Tokenizer()
 
         self.transformer = Transformer(
             width=transformer_width,
@@ -211,6 +212,7 @@ def clip_text_b16(
     transformer_layers=12,
     checkpoint_num=0,
     pretrained=True,
+    tokenizer=None,
 ):
     # raise NotImplementedError
     model = CLIP_TEXT(
@@ -221,6 +223,7 @@ def clip_text_b16(
         transformer_heads,
         transformer_layers,
         checkpoint_num,
+        tokenizer=tokenizer,
     )
     # pretrained = _MODELS["ViT-B/16"]
     # logger.info(f"Load pretrained weights from {pretrained}")
@@ -269,6 +272,7 @@ def clip_text_l14(
     transformer_layers=12,
     checkpoint_num=0,
     pretrained=True,
+    tokenizer=None,
 ):
     model = CLIP_TEXT(
         embed_dim,
@@ -278,6 +282,7 @@ def clip_text_l14(
         transformer_heads,
         transformer_layers,
         checkpoint_num,
+        tokenizer=tokenizer,
     )
     if pretrained:
         if isinstance(pretrained, str) and pretrained != "bert-base-uncased":

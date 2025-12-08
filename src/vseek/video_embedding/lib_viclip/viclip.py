@@ -217,6 +217,7 @@ class ViCLIP(nn.Module):
                 context_length=self.max_txt_l,
                 vocab_size=self.text_encoder_vocab_size,
                 checkpoint_num=0,
+                tokenizer=self.tokenizer,
             )
         elif encoder_name == "vit_b16":
             text_encoder = clip_text_b16(
@@ -224,6 +225,7 @@ class ViCLIP(nn.Module):
                 context_length=self.max_txt_l,
                 vocab_size=self.text_encoder_vocab_size,
                 checkpoint_num=0,
+                tokenizer=self.tokenizer,
             )
         else:
             raise NotImplementedError(f"Not implemented: {encoder_name}")
