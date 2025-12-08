@@ -288,3 +288,21 @@ CUDA_VISIBLE_DEVICES=5 python3 scripts/run_uniform_agent_data.py inference.max_i
 
 
 python3 -m verl.model_merger merge --backend fsdp --local_dir checkpoints/vseek/qwen3-4bt_vl_lvb-emreward-vllm-wtool-tag/global_step_260/actor  --target_dir checkpoints/vseek/qwen3-4bt_vl_lvb-emreward-vllm-wtool-tag/global_step_260/actor/huggingface
+
+
+### TACC build
+
+CC=/usr/bin/gcc CXX=/usr/bin/g++ pip install -r requirements.txt
+
+install decord from source 
+- install ffmpeg=4.4.2 with conda install 'ffmpeg=4'
+
+cd to decord
+
+mdkir build & cd build
+C=$(which gcc) CXX=$(which g++) cmake .. -DUSE_CUDA=ON -DCMAKE_BUILD_TYPE=Release -DFFMPEG_DIR=$WORK/miniforge3/envs/vseek-vllm
+make
+
+cd python
+python setup.py install
+
