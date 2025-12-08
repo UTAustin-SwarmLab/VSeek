@@ -17,6 +17,8 @@ from vseek.video_embedding.video_clip import ViClip
 from data.lvb import LongVideoBench
 from vseek.data.frame import VideoFrames
 import traceback
+from concurrent.futures import ThreadPoolExecutor
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -88,40 +90,73 @@ class VideoSearchServer:
 
     def init_index(self):
         """Initialize the video index by loading embeddings and subtitles."""
-
         
-
+        # Determine max workers
+        default_workers = min(16, (os.cpu_count() or 16))
+        max_workers = int(os.getenv("VSEEK_WORKERS", default_workers))
+        
         for dataset_name in self.entries.keys():
             total_success = 0
             dir_name = f"{dataset_name}_window_{self.window_size}"
             data_root = Path(self.index_path).joinpath(dir_name)
             
             logger.info(f"Loading video index from: {data_root}")
-            for entry in tqdm(self.entries[dataset_name], desc="Processing entries"):
+            
+            # Filter entries that need loading
+            to_load = []
+            for entry in self.entries[dataset_name]:
                 video_id = entry["metadata"]["video_id"]
-                if video_id not in self.video_embeddings[dataset_name] or video_id not in self.video_subtitles[dataset_name] or video_id not in self.video_subtitle_embeddings[dataset_name]:
+                if (video_id not in self.video_embeddings[dataset_name] or 
+                    video_id not in self.video_subtitles[dataset_name] or 
+                    video_id not in self.video_subtitle_embeddings[dataset_name]):
+                    to_load.append(video_id)
+            
+            # Deduplicate
+            to_load = list(set(to_load))
+            
+            # Thread-safe loading function
+            def _load_single_video(video_id):
+                try:
                     pkl_path = data_root.joinpath(f"{video_id}")
-
+                    
                     if not pkl_path.exists():
-                        # Skip if the preprocessed frames are not available
-                        # You can generate them via LongVideoBench.save_it_as_vseek_data()
                         logger.warning(f"Missing preprocessed frames: {pkl_path}")
-                        continue
+                        return None
+                    
+                    # Load data
+                    video_frames = VideoFrames.load(str(pkl_path))
+                    
+                    return {
+                        "video_id": video_id,
+                        "embeddings": video_frames.embeddings,
+                        "subtitles": video_frames.window_by_subtitle,
+                        "subtitle_embeddings": video_frames.subtitle_embeddings
+                    }
+                except Exception as e:
+                    logger.error(f"Failed to load video {video_id}: {e}")
+                    print(traceback.format_exc())
+                    return None
 
-                    try:
-                        video_frames = VideoFrames.load(str(pkl_path))
-                        self.video_embeddings[dataset_name][video_id] = video_frames.embeddings
-                        self.video_subtitles[dataset_name][video_id] = video_frames.window_by_subtitle
-                        self.video_subtitle_embeddings[dataset_name][video_id] = video_frames.subtitle_embeddings
-                        logger.debug(f"Loaded video {video_id} with {len(video_frames.embeddings)} embeddings")
-                        total_success += 1
-                    except Exception as e:
-                        logger.error(f"Failed to load video {video_id}: {e}")
-                        print(traceback.format_exc())
-                        continue
+            # Execute in parallel
+            logger.info(f"Loading {len(to_load)} videos in parallel with {max_workers} workers...")
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                results = list(tqdm(
+                    executor.map(_load_single_video, to_load),
+                    total=len(to_load),
+                    desc=f"Loading {dataset_name} index"
+                ))
+            
+            # Aggregate results back into main structures (main thread)
+            for res in results:
+                if res:
+                    vid = res["video_id"]
+                    self.video_embeddings[dataset_name][vid] = res["embeddings"]
+                    self.video_subtitles[dataset_name][vid] = res["subtitles"]
+                    self.video_subtitle_embeddings[dataset_name][vid] = res["subtitle_embeddings"]
+                    total_success += 1
             
             logger.info(f"Loaded {total_success} videos")
-            logger.info(f"Loaded {len(self.video_embeddings[dataset_name])} videos")
+            logger.info(f"Total loaded for {dataset_name}: {len(self.video_embeddings[dataset_name])} videos")
 
 
     def search_video(self):
@@ -266,7 +301,11 @@ class VideoSearchServer:
                 return jsonify({"error": "No subtitles available"}), 404
 
             # Get text embeddings for all subtitles
+            
             subtitle_embeddings = self.video_subtitle_embeddings[dataset_name][video_id]
+            if len(subtitle_embeddings) == 0:
+                logger.warning(f"No subtitle embeddings available for video {video_id}")
+                return jsonify({"error": f"No subtitle available"})
             logger.debug(f"Processing {len(subtitles)} subtitles")
             subtitle_embeddings_norm = []
             subtitle_embeddings_keys = []

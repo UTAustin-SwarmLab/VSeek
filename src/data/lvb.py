@@ -188,20 +188,7 @@ class LongVideoBench(Manager):
                     "metadata": {
                         "video_id": item["video_id"],
                         "id": item["id"],
-                        "position": item["position"],
-                        "question_wo_referring_query": item[
-                            "question_wo_referring_query"
-                        ],
-                        "topic_category": item["topic_category"],
-                        "question_category": cat,
-                        "level": item["level"],
-                        "duration_group": item["duration_group"],
-                        "starting_timestamp_for_subtitles": item[
-                            "starting_timestamp_for_subtitles"
-                        ],
-                        "duration": item["duration"],
-                        "view_count": item["view_count"],
-                        "original_data": item,
+                        "original_data": json.dumps(item),
                     },
 
                 }

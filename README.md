@@ -214,6 +214,39 @@ bash scripts/data_ops/preprocess_videomme.sh \
     --prompt_type tag
 ```
 
+### MLVU
+plotQA, needle, ego, count, order, anomaly_reco, topic_reasoning
+```bash
+# Process MLVU dataset (if preprocessor exists)
+# Add your MLVU processing commands here
+```
+```bash
+python3 scripts/data_ops/run_data_pipeline.py \
+    retriever.window_size=8 dataset.name='mlvu' \
+    dataset.mlvu.dataset_path="/nas/mars/dataset/MVLU/MVLU" \
+    dataset.mlvu.burned_path="/nas/mars/dataset/MVLU/MVLU" \
+    retriever.index_path="/home/hg22723/vseek/dataset"
+```
+
+#### Run data preprocessing to create train and test parquets for RL
+
+python3
+```bash
+bash scripts/data_ops/preprocess_mvlu.sh \
+    --local_dataset_path "/nas/mars/dataset/MLVU/MLVU" \
+    --burned_path "/nas/mars/dataset/MLVU/MLVU" \
+    --train_ratio 0.8 \
+    --local_save_dir /nas/mars/dataset/MVLU \
+    --index_path /home/hg22723/vseek/dataset \
+    --window_size 8 \
+    --prompt_type tag
+
+# Option 2: Use the convenience script
+bash scripts/preprocess_mvlu.sh
+```
+
+
+
 
 ### For Video-MME and LVBench 
 
@@ -267,12 +300,8 @@ python src/data/lvbench_preprocessor.py \
 bash scripts/preprocess_lvbench.sh
 ```
 
-### MLVU
-plotQA, needle, ego, count, order, anomaly_reco, topic_reasoning
-```bash
-# Process MLVU dataset (if preprocessor exists)
-# Add your MLVU processing commands here
-```
+
+
 
 python3 scripts/utils/download.py --dataset_name lmms-lab/LongVideoBench --download_directory /nas/mars/dataset/longvideobench -->
 

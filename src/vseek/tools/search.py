@@ -189,7 +189,8 @@ class VideoSearchTool(BaseTool):
                 resp.raise_for_status()
                 data = resp.json()
                 frame_indices = sorted(data.get("subtitle_indices", []))
-
+            if data.get("error"):
+                return [], [], {"status": "error", "error": data.get("error"), "search_mode": search_type}
             #print(f"frame_indices: {frame_indices}")
             vid = data.get("video_id") or video_id
             frames = []
@@ -327,7 +328,9 @@ class VideoSearchTool(BaseTool):
                     "status": "success",
                     "search_mode": "summary",
                 }
-            # Store results in instance dictionary
+            if metadata.get("error"):
+                return ToolResponse(text=json.dumps({"error": metadata.get("error")})), 0.0, {"error": metadata.get("error")}
+            # # Store results in instance dictionary
             self._instance_dict[instance_id]["search_results"].append({
                 "query": query,
                 "frame_indices": frame_indices,
