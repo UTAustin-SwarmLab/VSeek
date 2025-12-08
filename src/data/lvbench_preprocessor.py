@@ -221,6 +221,7 @@ if __name__ == "__main__":
     raw_entries: list[dict] = lvbench.load_data()
     print(f"Loaded {len(raw_entries)} entries")
     
+    
     processed_rows: list[dict] = []
     data_source = "lvbench"
     
@@ -236,104 +237,217 @@ if __name__ == "__main__":
     
     cached_video_frames = {}
     cached_ids = []
-    # Process each entry
-    for idx, entry in tqdm(enumerate(raw_entries), desc="Processing entries for parquet"):
-        try:
-            messages = build_prompt(args, entry)
-            correct_choice = entry.get("correct_choice", None)
-            
-            row = {
-                "data_source": data_source,
-                "prompt": messages,
-                "ability": "video_reasoning",
-                "reward_model": {
-                    "style": "exact_match",
-                    "ground_truth": str(correct_choice) if correct_choice is not None else None
-                },
-                "extra_info": {
-                "index": idx,
-                "question": entry.get("question", ""),
-                "candidates": entry.get("candidates", []),
-                "correct_choice": correct_choice,
-                "metadata": entry.get("metadata", {}),
-                "paths": {
-                    "raw_video_path": entry.get("paths", {}).get("raw_video_path"),
-                    "subtitle_path": entry.get("paths", {}).get("subtitle_path"),
-                    "video_path": entry.get("paths", {}).get("video_path"),
-                },
-                "tools_kwargs": {
-                    "video_search": {
-                        "execute_kwargs": {
-                            "topk": 4,
-                            "video_id": entry.get("metadata", {}).get("video_id"),
-                            "dataset": "lvbench",
+    
+    def _process_entries_single_video(video_id_entries_tuple):
+        video_id, idx_entries = video_id_entries_tuple
+        results = []
+        # Load the video frames
+        video_frames = None
+        # Optionally embed precomputed frames per window
+        if data_root is not None:
+            try:
+                vf_path = os.path.join(data_root, str(video_id))
+                
+                if os.path.exists(vf_path):
+                    
+                    video_frames = VideoFrames.load(vf_path)
+                    
+                    frames_by_window = []
+                    
+                    for window_idx in video_frames.frames_by_window.keys():
+                        chunk = video_frames.get_frame_chunk(window_idx)
+                        encoded = [
+                            _encode_frame(f, args.thumb_max_side, args.thumb_quality)
+                            for f in chunk
+                        ]
+                        frames_by_window.append({
+                            "window_idx": window_idx,
+                            "encoded_frames": encoded
+                        })
+                    
+                        video_summary = video_frames.uniformly_sample_frames(args.max_frames_per_turn)
+                        encoded_video_summary = [
+                            _encode_frame(f, args.thumb_max_side, args.thumb_quality)
+                            for f in video_summary
+                        ]
+            except Exception as e:
+                print(f"Error loading video frames for {video_id}: {e}")
+                traceback.print_exc()
+        rows = []
+        for idx, entry in idx_entries:
+            try:
+                messages = build_prompt(args, entry)
+                correct_choice = entry.get("correct_choice", None)
+                
+                row = {
+                    "data_source": data_source,
+                    "prompt": messages,
+                    "ability": "video_reasoning",
+                    "reward_model": {
+                        "style": "exact_match",
+                        "ground_truth": str(correct_choice) if correct_choice is not None else None
+                    },
+                    "extra_info": {
+                        "index": idx,
+                        "question": entry.get("question", ""),
+                        "candidates": entry.get("candidates", []),
+                        "correct_choice": correct_choice,
+                        "metadata": entry.get("metadata", {}),
+                        "paths": {
+                            "raw_video_path": entry.get("paths", {}).get("raw_video_path"),
+                            "subtitle_path": entry.get("paths", {}).get("subtitle_path"),
+                            "video_path": entry.get("paths", {}).get("video_path"),
+                        },
+                        "tools_kwargs": {
+                            "video_search": {
+                                "execute_kwargs": {
+                                    "topk": 4,
+                                    "video_id": entry.get("metadata", {}).get("video_id"),
+                                    "dataset": "lvbench",
+                                },
                             },
                         },
                     },
-                },
-            }
+                }
+                
+                if data_root is not None:
+                    row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["precomputed_frames"] = frames_by_window
+                    row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["video_summary"] = encoded_video_summary
 
-            
-            # Optionally embed precomputed frames per window
-            if data_root is not None:
-                try:
-                    video_id = entry.get("metadata", {}).get("video_id")
-                    vf_path = os.path.join(data_root, str(video_id))
                     
-                    if os.path.exists(vf_path):
-                        if vf_path not in cached_video_frames:
-                            video_frames = VideoFrames.load(vf_path)
-                            cached_ids.append(vf_path)
+                    print(f"Encoded video summary: {len(encoded_video_summary)}")
+                    print(f"Encoded {len(frames_by_window)} frames for video {video_id}")
+                    print(f"Total video length: {len(video_frames.all_frames)}")
+                    print(f"Total video windows: {len(video_frames.frames_by_window)}")
+                rows.append(row)
+            except Exception as e:
+                print(f"Error processing entry {idx}: {e}")
+                print(traceback.format_exc())
+                continue
+        return rows
+    
+    max_workers = int(os.getenv("VSEEK_WORKERS", 8))
+    
+    # Group entries by video id
+    rows_by_video_id = defaultdict(list)
+    for idx, entry in enumerate(raw_entries):
+        video_id = entry.get("metadata", {}).get("video_id")
+        rows_by_video_id[video_id].append((idx, entry))
+    print(f"Grouped {len(raw_entries)} entries into {len(rows_by_video_id)} unique videos")
+    
+    # Process each video in parallel
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        group_results = list(tqdm(
+            executor.map(_process_entries_single_video, rows_by_video_id.items()),
+            total=len(rows_by_video_id),
+            desc="Processing entries for parquet"
+        ))
+    processed_rows = []
+    # Flatten results
+    for group_res in group_results:
+        processed_rows.extend(group_res)
+
+    # Sort by original index
+    processed_rows.sort(key=lambda x: x["extra_info"]["index"])
+    print(f"Processed {len(processed_rows)} rows")
+    # Process each entry
+    # for idx, entry in tqdm(enumerate(raw_entries), desc="Processing entries for parquet"):
+        # try:
+        #     messages = build_prompt(args, entry)
+        #     correct_choice = entry.get("correct_choice", None)
+            
+        #     row = {
+        #         "data_source": data_source,
+        #         "prompt": messages,
+        #         "ability": "video_reasoning",
+        #         "reward_model": {
+        #             "style": "exact_match",
+        #             "ground_truth": str(correct_choice) if correct_choice is not None else None
+        #         },
+        #         "extra_info": {
+        #             "index": idx,
+        #             "question": entry.get("question", ""),
+        #             "candidates": entry.get("candidates", []),
+        #             "correct_choice": correct_choice,
+        #             "metadata": entry.get("metadata", {}),
+        #             "paths": {
+        #                 "raw_video_path": entry.get("paths", {}).get("raw_video_path"),
+        #                 "subtitle_path": entry.get("paths", {}).get("subtitle_path"),
+        #                 "video_path": entry.get("paths", {}).get("video_path"),
+        #             },
+        #             "tools_kwargs": {
+        #                 "video_search": {
+        #                     "execute_kwargs": {
+        #                         "topk": 4,
+        #                         "video_id": entry.get("metadata", {}).get("video_id"),
+        #                         "dataset": "lvbench",
+        #                     },
+        #                 },
+        #             },
+        #         },
+        #     }
+
+            
+        #     # Optionally embed precomputed frames per window
+        #     if data_root is not None:
+        #         try:
+        #             video_id = entry.get("metadata", {}).get("video_id")
+        #             vf_path = os.path.join(data_root, str(video_id))
+                    
+        #             if os.path.exists(vf_path):
+        #                 if vf_path not in cached_video_frames:
+        #                     video_frames = VideoFrames.load(vf_path)
+        #                     cached_ids.append(vf_path)
                         
-                        if len(cached_ids) > 2:
-                            pop_id = cached_ids.pop(0)
-                            del cached_video_frames[pop_id]
+        #                 if len(cached_ids) > 2:
+        #                     pop_id = cached_ids.pop(0)
+        #                     del cached_video_frames[pop_id]
                             
                         
-                        if vf_path in cached_video_frames:
-                            frames_by_window = cached_video_frames[vf_path]['frames_by_window']
-                            encoded_video_summary = cached_video_frames[vf_path]['video_summary']
-                        else:
-                            frames_by_window = []
+        #                 if vf_path in cached_video_frames:
+        #                     frames_by_window = cached_video_frames[vf_path]['frames_by_window']
+        #                     encoded_video_summary = cached_video_frames[vf_path]['video_summary']
+        #                 else:
+        #                     frames_by_window = []
                             
-                            for window_idx in video_frames.frames_by_window.keys():
-                                chunk = video_frames.get_frame_chunk(window_idx)
-                                encoded = [
-                                    _encode_frame(f, args.thumb_max_side, args.thumb_quality)
-                                    for f in chunk
-                                ]
-                                frames_by_window.append({
-                                    "window_idx": window_idx,
-                                    "encoded_frames": encoded
-                                })
+        #                     for window_idx in video_frames.frames_by_window.keys():
+        #                         chunk = video_frames.get_frame_chunk(window_idx)
+        #                         encoded = [
+        #                             _encode_frame(f, args.thumb_max_side, args.thumb_quality)
+        #                             for f in chunk
+        #                         ]
+        #                         frames_by_window.append({
+        #                             "window_idx": window_idx,
+        #                             "encoded_frames": encoded
+        #                         })
                             
-                                video_summary = video_frames.uniformly_sample_frames(args.max_frames_per_turn)
-                                encoded_video_summary = [
-                                    _encode_frame(f, args.thumb_max_side, args.thumb_quality)
-                                    for f in video_summary
-                                ]
-                                cached_video_frames[vf_path] = {
-                                    "frames_by_window": frames_by_window,
-                                    "video_summary": encoded_video_summary,
-                                }
-                        row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["precomputed_frames"] = frames_by_window
-                        row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["video_summary"] = encoded_video_summary
+        #                         video_summary = video_frames.uniformly_sample_frames(args.max_frames_per_turn)
+        #                         encoded_video_summary = [
+        #                             _encode_frame(f, args.thumb_max_side, args.thumb_quality)
+        #                             for f in video_summary
+        #                         ]
+        #                         cached_video_frames[vf_path] = {
+        #                             "frames_by_window": frames_by_window,
+        #                             "video_summary": encoded_video_summary,
+        #                         }
+        #                 row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["precomputed_frames"] = frames_by_window
+        #                 row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["video_summary"] = encoded_video_summary
 
                         
-                        print(f"Encoded video summary: {len(encoded_video_summary)}")
-                        print(f"Encoded {len(frames_by_window)} frames for video {video_id}")
-                        print(f"Total video length: {len(video_frames.all_frames)}")
-                        print(f"Total video windows: {len(video_frames.frames_by_window)}")
-                except Exception as e:
-                    print(f"Error processing video frames for {video_id}: {e}")
-                    traceback.print_exec()
+        #                 print(f"Encoded video summary: {len(encoded_video_summary)}")
+        #                 print(f"Encoded {len(frames_by_window)} frames for video {video_id}")
+        #                 print(f"Total video length: {len(video_frames.all_frames)}")
+        #                 print(f"Total video windows: {len(video_frames.frames_by_window)}")
+        #         except Exception as e:
+        #             print(f"Error processing video frames for {video_id}: {e}")
+        #             traceback.print_exec()
             
-            processed_rows.append(row)
+        #     processed_rows.append(row)
         
-        except Exception as e:
-            print(f"Error processing entry {idx}: {e}")
-            print(traceback.format_exc())
-            continue
+        # except Exception as e:
+        #     print(f"Error processing entry {idx}: {e}")
+        #     print(traceback.format_exc())
+        #     continue
 
     print(f"Processed {len(processed_rows)} rows")
 

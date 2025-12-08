@@ -21,6 +21,7 @@ from data.manager import Manager
 from omegaconf import DictConfig
 from vseek.video.read_video import read_video
 from vseek.video_embedding.video_clip import ViClip
+from vseek.video_embedding.lib_viclip import frames2tensor
 
 
 class MLVU(Manager):
@@ -47,13 +48,14 @@ class MLVU(Manager):
             "6_anomaly_reco",
             "7_topic_reasoning",
         ]
+        
 
     def _load_and_merge_data_from_json(self, json_file):
         with open(json_file, "r") as f:
             data = json.load(f)
         return data
     
-    def merge_category_files(self, output_filename: str = "mlvu_val.json"):
+    def merge_category_files(self):
         """
         Merge MLVU category JSON files into a single JSON file.
         
@@ -69,23 +71,8 @@ class MLVU(Manager):
         print(f"Searching for MLVU category JSON files in {self._dataset_path}")
         
         # Try different possible directory structures
-        possible_data_dirs = [
-            os.path.join(self._dataset_path, "data"),
-            os.path.join(self._dataset_path, "annotations"),
-            os.path.join(self._dataset_path, "json"),
-            self._dataset_path,  # Check root directory as well
-        ]
+        data_dir = os.path.join(self._dataset_path, "json")
         
-        data_dir = None
-        for possible_dir in possible_data_dirs:
-            if os.path.exists(possible_dir):
-                # Check if any category JSON exists in this directory
-                test_files = [
-                    os.path.join(possible_dir, f"{cat}.json") for cat in self._categories
-                ]
-                if any(os.path.exists(f) for f in test_files):
-                    data_dir = possible_dir
-                    break
         
         if not data_dir:
             raise FileNotFoundError(
@@ -94,6 +81,8 @@ class MLVU(Manager):
         
         print(f"Found MLVU data directory: {data_dir}")
         
+        merged_data = []
+        id = 0
         # Load and merge each category
         for category in tqdm(self._categories, desc="Merging categories"):
             category_file = os.path.join(data_dir, f"{category}.json")
@@ -124,7 +113,9 @@ class MLVU(Manager):
                         item["category"] = category
                     if "task_type" not in item:
                         item["task_type"] = category
-                
+                    item["id"] = id
+                    id += 1
+                    item["video"] = f"{category}/{item['video']}"
                 merged_data.extend(items)
                 category_stats[category] = len(items)
                 print(f"  Loaded {len(items)} items from {category}")
@@ -137,25 +128,7 @@ class MLVU(Manager):
                 print(traceback.format_exc())
                 continue
         
-        # Save merged data
-        output_path = os.path.join(self._dataset_path, output_filename)
-        
-        print(f"\nSaving merged data to {output_path}")
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(merged_data, f, indent=2, ensure_ascii=False)
-        
-        # Print statistics
-        print("\n" + "="*60)
-        print("Merge Statistics:")
-        print("="*60)
-        for category, count in category_stats.items():
-            print(f"  {category:25s}: {count:6d} items")
-        print("-"*60)
-        print(f"  {'Total':25s}: {len(merged_data):6d} items")
-        print("="*60)
-        print(f"\nSuccessfully merged {len(merged_data)} items into {output_path}")
-        
-        return output_path
+        return merged_data
     
     def load_data(self):
         """
@@ -165,27 +138,10 @@ class MLVU(Manager):
             List of processed dataset entries
         """
         category_buckets = defaultdict(list)
-        
+        mlvu_dataset = self.merge_category_files()
         print(f"Loading MLVU dataset from {self._dataset_path}...")
         
-        # Try loading from JSON file
-        json_file = os.path.join(self._dataset_path, "data", "mlvu_val.json")
-        if not os.path.exists(json_file):
-            # Try alternative paths
-            json_file = os.path.join(self._dataset_path, "mlvu_val.json")
-        
-        if not os.path.exists(json_file):
-            # If merged file doesn't exist, try to create it from category files
-            print(f"MLVU merged JSON file not found. Attempting to merge category files...")
-            try:
-                json_file = self.merge_category_files()
-            except Exception as e:
-                raise FileNotFoundError(
-                    f"MLVU JSON file not found at {json_file} and failed to merge category files: {e}"
-                )
-        
-        with open(json_file, "r") as f:
-            mlvu_dataset = json.load(f)
+
         
         print(f"Loaded {len(mlvu_dataset)} samples from MLVU")
         
@@ -193,19 +149,10 @@ class MLVU(Manager):
         for idx, item in enumerate(tqdm(mlvu_dataset, desc="Processing MLVU")):
             try:
                 # Extract video information
-                video_id = item.get("video_id", item.get("id", f"video_{idx}"))
+                video_id = item.get("video").split(".")[0]
                 question = item.get("question", "")
                 
                 # Handle different answer formats
-                answer = None
-                if "answer" in item:
-                    answer = item["answer"]
-                elif "gt" in item:
-                    answer = item["gt"]
-                elif "correct_choice" in item:
-                    answer = item["correct_choice"]
-                
-                # Handle candidates/options - MLVU might have them embedded in question
                 candidates = []
                 if "options" in item:
                     candidates = item["options"]
@@ -213,27 +160,23 @@ class MLVU(Manager):
                     candidates = item["candidates"]
                 elif "choices" in item:
                     candidates = item["choices"]
-                else:
-                    # Try to extract from question if formatted like "A) option1 B) option2"
-                    # This is a common format in MLVU
-                    if any(marker in question for marker in ['A)', 'B)', 'C)', 'D)']):
-                        # Split by option markers
-                        import re
-                        parts = re.split(r'[A-Z]\)', question)
-                        if len(parts) > 1:
-                            # First part is the actual question
-                            question = parts[0].strip()
-                            # Rest are candidates
-                            candidates = [part.strip() for part in parts[1:] if part.strip()]
+                answer = None
+                if "answer" in item:
+                    answer = item["answer"]
+                    answer = str(candidates.index(answer))
+                    print(f"Answer: {answer}")
+                    
                 
+                # Handle candidates/options - MLVU might have them embedded in question[]
+
+        
                 # Determine paths for video storage
-                video_filename = item.get("video", item.get("video_path", item.get("video_name", f"{video_id}.mp4")))
-                
+                video_filename = item.get("video")
                 # Handle different video path formats
                 if not video_filename.endswith(('.mp4', '.avi', '.mov', '.mkv')):
                     video_filename = f"{video_filename}.mp4"
                 
-                video_save_path = os.path.join(self._dataset_path, "videos", video_filename)
+                video_save_path = os.path.join(self._dataset_path, "video", video_filename)
                 
                 # Check if video exists
                 if not os.path.exists(video_save_path):
@@ -242,16 +185,6 @@ class MLVU(Manager):
                 
                 # Handle subtitles if present
                 subtitle_path = None
-                if "subtitles" in item or "subtitle" in item:
-                    subtitle_data = item.get("subtitles", item.get("subtitle", []))
-                    subtitle_save_path = os.path.join(
-                        self._dataset_path, "subtitles", f"{video_id}.json"
-                    )
-                    os.makedirs(os.path.dirname(subtitle_save_path), exist_ok=True)
-                    with open(subtitle_save_path, "w") as f:
-                        json.dump(subtitle_data, f)
-                    subtitle_path = subtitle_save_path
-                
                 # Determine category
                 category = item.get("category", item.get("task_type", item.get("type", "general")))
                 
@@ -271,13 +204,7 @@ class MLVU(Manager):
                     "metadata": {
                         "video_id": video_id,
                         "id": item.get("id", video_id),
-                        "question_category": category,
-                        "level": item.get("level", item.get("difficulty", "medium")),
-                        "duration": item.get("duration", 0),
-                        "starting_timestamp_for_subtitles": item.get(
-                            "starting_timestamp_for_subtitles", 0
-                        ),
-                        "original_data": item,
+                        "original_data": json.dumps(item),
                     },
                 }
                 
@@ -306,7 +233,7 @@ class MLVU(Manager):
             window_size = self.cfg.retriever.window_size
             
             # Allow overriding workers via env
-            default_workers = min(4, (os.cpu_count() or 4))
+            default_workers = min(16, (os.cpu_count() or 16))
             max_workers = int(os.getenv("VSEEK_WORKERS", default_workers))
             
             # Deduplicate entries by video_id
@@ -329,6 +256,16 @@ class MLVU(Manager):
             def _process_single_entry(entry: dict):
                 try:
                     unique_id = entry["metadata"]["video_id"]
+                    dataset_name = "mlvu"
+                    dir_name = f"{dataset_name}_window_{window_size}"
+                    file_name = f"{unique_id}"
+                    output_dir = self.cfg.retriever.index_path
+                    output_path = Path(output_dir).joinpath(dir_name, file_name)
+                    if output_path.exists():
+                        print(f"Skipping already processed video: {unique_id}")
+                        return
+                    
+                    
                     
                     # Fast skip if already processed on disk
                     if self.is_file_exists(window_size, unique_id):
@@ -401,18 +338,53 @@ class MLVU(Manager):
                             video_frames.add_subtitle_embedding(
                                 subtitle, vclip.get_text_embedding(subtitle)
                             )
-                    
+                    # for window_idx in video_frames.frames_by_window.keys():
+                    #     frame_chunk = video_frames.get_frame_chunk(window_idx)
+                    #     video_frames.add_embedding(
+                    #         window_idx, vclip.get_feature(frame_chunk)
+                    #     )
                     # Add frame embeddings for each window
-                    for window_idx in video_frames.frames_by_window.keys():
-                        frame_chunk = video_frames.get_frame_chunk(window_idx)
-                        video_frames.add_embedding(
-                            window_idx, vclip.get_feature(frame_chunk)
-                        )
+                    window_indices = list(video_frames.frames_by_window.keys())
+                    batch_size = 32
+                    
+                    for i in range(0, len(window_indices), batch_size):
+                        batch_indices = window_indices[i:i+batch_size]
+                        
+                        # Prepare batch tensors
+                        tensors = []
+                        valid_batch_indices = []
+                        
+                        for window_idx in batch_indices:
+                            frame_chunk = video_frames.get_frame_chunk(window_idx)
+                            if not frame_chunk:
+                                continue
+                            # frames2tensor handles normalization, resizing and creating (1, T, C, H, W)
+                            t = frames2tensor(frame_chunk, device=vclip.device)
+                            tensors.append(t)
+                            valid_batch_indices.append(window_idx)
+                        
+                        if not tensors:
+                            continue
+                            
+                        # Stack tensors: (B, T, C, H, W)
+                        batch_input = torch.cat(tensors, dim=0)
+                        
+                        # Inference
+                        with torch.no_grad():
+                            # vclip.clip is the ViCLIP model
+                            features = vclip.clip.get_vid_features(batch_input).cpu()
+                            
+                        # Store results
+                        for j, window_idx in enumerate(valid_batch_indices):
+                            video_frames.add_embedding(
+                                window_idx, features[j]
+                            )
                     
                     # Save indexed data
                     dataset_name = "mlvu"
                     dir_name = f"{dataset_name}_window_{window_size}"
                     file_name = f"{unique_id}.pkl"
+                    
                     output_dir = self.cfg.retriever.index_path
                     output_path = Path(output_dir).joinpath(dir_name, file_name)
                     video_frames.save(str(output_path))

@@ -61,8 +61,8 @@ dataset:
   
   mlvu:
     name: "mlvu"
-    dataset_path: "/nas/mars/dataset/mlvu"
-    burned_path: "/nas/mars/dataset/mlvu"
+    dataset_path: "/nas/mars/dataset/MLVU/MLVU"
+    burned_path: "/nas/mars/dataset/MLVU/MLVU"
     enabled: true
   
   

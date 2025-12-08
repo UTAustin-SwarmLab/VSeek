@@ -172,14 +172,8 @@ class LVBench(Manager):
                     "metadata": {
                         "video_id": video_id,
                         "id": item.get("uid", video_id),
-                        "question_category": category,
-                        "level": item.get("level", item.get("difficulty", "medium")),
-                        "duration": item.get("duration", 0),
-                        "starting_timestamp_for_subtitles": item.get(
-                            "starting_timestamp_for_subtitles", 0
-                        ),
                         # Store original item for reference
-                        "original_data": item,
+                        "original_data": json.dumps(item),
                     },
                 }
                 

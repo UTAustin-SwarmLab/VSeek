@@ -19,6 +19,8 @@ import cv2
 import base64
 import traceback
 from data.prompts.prompts import tagbased, openaitooluse, tagbasedsummary
+from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
 
 def build_prompt(args, entry: dict) -> list[dict]:
     question_text: str = entry["question"].strip()
@@ -120,74 +122,131 @@ if __name__ == "__main__":
         dir_name = f"lvb_window_{args.window_size}"
         data_root = os.path.join(args.index_path, dir_name)
     else:
-        raise ValueError(f"Invalid index path or embed frames is not enabled: {args.index_path} or {args.embed_frames}")
-    for idx, entry in tqdm(enumerate(raw_entries), desc="Processing LVB entries"):
-        encoded_video_summary = None
-        frames_by_window = None
+        # Optional: Allow running without embedding frames if not requested
+        if args.embed_frames:
+             raise ValueError(f"Invalid index path or embed frames is not enabled: {args.index_path} or {args.embed_frames}")
 
+    # Group entries by video_id
+    entries_by_video = defaultdict(list)
+    for idx, entry in enumerate(raw_entries):
+        vid = entry.get("metadata", {}).get("video_id")
+        entries_by_video[vid].append((idx, entry))
+
+    print(f"Grouped {len(raw_entries)} entries into {len(entries_by_video)} unique videos")
+
+    # Process each video group in parallel
+    print("Processing video groups in parallel...")
+    
+    # Allow overriding workers via env
+    default_workers = min(16, (os.cpu_count() or 16))
+    max_workers = int(os.getenv("VSEEK_WORKERS", default_workers))
+
+    def _process_video_group(video_id_entries_tuple):
+        video_id, idx_entries = video_id_entries_tuple
+        results = []
+        
+        # Load video frames once for the whole group if needed
+        video_data_cache = None
+        
+        # Check if we need to load frames (if any entry needs it and path exists)
         if data_root is not None:
-            try:
-                video_id = entry.get("metadata", {}).get("video_id")
-                vf_path = os.path.join(data_root, str(video_id))
-                video_frames = VideoFrames.load(vf_path)
-                
-                frames_by_window_list = []
-                for window_idx in video_frames.frames_by_window.keys():
-                    chunk = video_frames.get_frame_chunk(window_idx)
-                    encoded = [_encode_frame(f, args.thumb_max_side, args.thumb_quality) for f in chunk]
-                    frames_by_window_list.append({"window_idx": window_idx, "encoded_frames": encoded})
-                
-                frames_by_window = frames_by_window_list
+             vf_path = os.path.join(data_root, str(video_id))
+             if os.path.exists(vf_path):
+                try:
+                    video_frames = VideoFrames.load(vf_path)
+                    
+                    frames_by_window_list = []
+                    for window_idx in video_frames.frames_by_window.keys():
+                        chunk = video_frames.get_frame_chunk(window_idx)
+                        encoded = [
+                            _encode_frame(f, args.thumb_max_side, args.thumb_quality)
+                            for f in chunk
+                        ]
+                        frames_by_window_list.append({
+                            "window_idx": window_idx,
+                            "encoded_frames": encoded
+                        })
+                    
+                    video_summary = video_frames.uniformly_sample_frames(args.max_frames_per_turn)
+                    encoded_video_summary = [
+                        _encode_frame(f, args.thumb_max_side, args.thumb_quality)
+                        for f in video_summary
+                    ]
+                    
+                    video_data_cache = {
+                        "frames_by_window": frames_by_window_list,
+                        "video_summary": encoded_video_summary
+                    }
+                except Exception as e:
+                    print(f"Error loading video frames for {video_id}: {e}")
+                    traceback.print_exc()
 
-                # video summary is uniformly sampled frames
-                video_summary = video_frames.uniformly_sample_frames(args.max_frames_per_turn)
-                encoded_video_summary = [_encode_frame(f, args.thumb_max_side, args.thumb_quality) for f in video_summary]
+        # Process each entry in the group
+        for idx, entry in idx_entries:
+            try:
+                messages = build_prompt(args, entry)
+                correct_choice = entry.get("correct_choice", None)
                 
-                print(f"Encoded video summary: {len(encoded_video_summary)}")
-                print(f"Encoded {len(frames_by_window)} frames for video {video_id}")
-                print(f"Total video length: {len(video_frames.all_frames)}")
-                print(f"Total video windows: {len(video_frames.frames_by_window)}")
-            except Exception:
-                print(f"Error processing video {entry.get('metadata', {}).get('video_id')}")
-                print(traceback.format_exc())
-        
-        messages = build_prompt(args, entry)
-        
-        correct_choice = entry.get("correct_choice", None)
-        row = {
-            "data_source": data_source,
-            "prompt": messages,
-            "ability": "video_reasoning",
-            # Simple rule-based reward: exact match on option index as string
-            "reward_model": {"style": "exact_match", "ground_truth": str(correct_choice) if correct_choice is not None else None},
-            "extra_info": {
-                "index": idx,
-                "question": entry.get("question", ""),
-                "candidates": entry.get("candidates", []),
-                "correct_choice": correct_choice,
-                "metadata": entry.get("metadata", {}),
-                "paths": {
-                    "raw_video_path": entry.get("paths", {}).get("raw_video_path"),
-                    "subtitle_path": entry.get("paths", {}).get("subtitle_path"),
-                    "video_path": entry.get("paths", {}).get("video_path"),
-                },
-                "tools_kwargs": {
-                    "video_search": {
-                        "execute_kwargs": {
-                            "topk": 4,
-                            "video_id": entry.get("metadata", {}).get("video_id"),
-                            "dataset": "lvb",
+                row = {
+                    "data_source": data_source,
+                    "prompt": messages,
+                    "ability": "video_reasoning",
+                    "reward_model": {
+                        "style": "exact_match",
+                        "ground_truth": str(correct_choice) if correct_choice is not None else None
+                    },
+                    "extra_info": {
+                        "index": idx,
+                        "question": entry.get("question", ""),
+                        "candidates": entry.get("candidates", []),
+                        "correct_choice": correct_choice,
+                        "metadata": entry.get("metadata", {}),
+                        "paths": {
+                            "raw_video_path": entry.get("paths", {}).get("raw_video_path"),
+                            "subtitle_path": entry.get("paths", {}).get("subtitle_path"),
+                            "video_path": entry.get("paths", {}).get("video_path"),
+                        },
+                        "tools_kwargs": {
+                            "video_search": {
+                                "execute_kwargs": {
+                                    "topk": 4,
+                                    "video_id": entry.get("metadata", {}).get("video_id"),
+                                    "dataset": "lvb",
+                                },
+                            },
                         },
                     },
-                },
-            },
-        }
+                }
 
-        if frames_by_window:
-            row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["precomputed_frames"] = frames_by_window
-            row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["video_summary"] = encoded_video_summary
+                # Attach cached video frames if available
+                if video_data_cache:
+                    row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["precomputed_frames"] = video_data_cache["frames_by_window"]
+                    row["extra_info"]["tools_kwargs"]["video_search"]["execute_kwargs"]["video_summary"] = video_data_cache["video_summary"]
 
-        processed_rows.append(row)
+                results.append(row)
+            
+            except Exception as e:
+                print(f"Error processing entry {idx}: {e}")
+                print(traceback.format_exc())
+                continue
+        
+        return results
+
+    processed_rows = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Map over video groups
+        group_results = list(tqdm(
+            executor.map(_process_video_group, entries_by_video.items()),
+            total=len(entries_by_video),
+            desc="Processing video groups"
+        ))
+    
+    # Flatten results
+    for group_res in group_results:
+        processed_rows.extend(group_res)
+
+    # Sort by original index
+    processed_rows.sort(key=lambda x: x["extra_info"]["index"])
 
     # Train/test split
     random.seed(args.seed)
