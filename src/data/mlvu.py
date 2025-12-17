@@ -202,8 +202,8 @@ class MLVU(Manager):
                         "video_path": video_save_path,
                     },
                     "metadata": {
-                        "video_id": video_id,
-                        "id": item.get("id", video_id),
+                        "video_id": str(video_id),
+                        "id": str(item.get("id", video_id)),
                         "original_data": json.dumps(item),
                     },
                 }
