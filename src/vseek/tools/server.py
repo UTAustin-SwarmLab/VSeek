@@ -114,24 +114,36 @@ class VideoSearchServer:
             # Deduplicate
             to_load = list(set(to_load))
             
-            # Thread-safe loading function
+            # Thread-safe loading function - load only what we need directly
             def _load_single_video(video_id):
                 try:
-                    pkl_path = data_root.joinpath(f"{video_id}")
+                    base_dir = data_root.joinpath(f"{video_id}")
                     
-                    if not pkl_path.exists():
-                        logger.warning(f"Missing preprocessed frames: {pkl_path}")
+                    if not base_dir.exists():
+                        logger.warning(f"Missing preprocessed frames: {base_dir}")
                         return None
                     
-                    # Load data
-                    video_frames = VideoFrames.load(str(pkl_path))
+                    # Load only embeddings and metadata directly (skip VideoFrames entirely)
+                    result = {"video_id": video_id, "embeddings": {}, "subtitles": {}, "subtitle_embeddings": {}}
                     
-                    return {
-                        "video_id": video_id,
-                        "embeddings": video_frames.embeddings,
-                        "subtitles": video_frames.window_by_subtitle,
-                        "subtitle_embeddings": video_frames.subtitle_embeddings
-                    }
+                    # Load embeddings
+                    embeddings_file = base_dir / "embeddings.pt"
+                    if embeddings_file.exists():
+                        result["embeddings"] = torch.load(embeddings_file, map_location="cpu")
+                    
+                    # Load subtitle embeddings
+                    subtitle_embeddings_file = base_dir / "subtitle_embeddings.pt"
+                    if subtitle_embeddings_file.exists():
+                        result["subtitle_embeddings"] = torch.load(subtitle_embeddings_file, map_location="cpu")
+                    
+                    # Load window_by_subtitle from metadata
+                    metadata_file = base_dir / "metadata.json"
+                    if metadata_file.exists():
+                        with open(metadata_file, "r") as f:
+                            metadata = json.load(f)
+                        result["subtitles"] = metadata.get("window_by_subtitle", {})
+                        
+                    return result
                 except Exception as e:
                     logger.error(f"Failed to load video {video_id}: {e}")
                     print(traceback.format_exc())
