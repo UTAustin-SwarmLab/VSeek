@@ -216,8 +216,8 @@ class VideoMME(Manager):
                         "video_path": video_path,
                     },
                     "metadata": {
-                        "video_id": video_id,
-                        "id": item.get("question_id", video_id),
+                        "video_id": str(video_id),
+                        "id": str(item.get("question_id", video_id)),
                         "original_data": json.dumps(item),
                     },
                 }
