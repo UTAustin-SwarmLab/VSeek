@@ -49,6 +49,7 @@ class VideoSearchServer:
         if self.retriever_name == "ViClip":
             self.retriever = ViClip(
                 pretrained_model_path=self.retrieval_model_path,
+                tokenizer_path=args.retriever.text_encoder_model_path,
                 gpu_number=self.gpu_number,
             )
         else:

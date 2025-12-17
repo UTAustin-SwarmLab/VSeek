@@ -27,13 +27,14 @@ class ViClip(ComputerVisionModelVideoEmbeddingBase):
         pretrained_model_path: str,
         size: str = "l",
         gpu_number: int = 0,
+        tokenizer_path: str = None,
     ) -> None:
         """Initialize the ViClip model."""
         self.model_cfg = {
             "size": size,
             "pretrained": pretrained_model_path,
         }
-        self.model = get_viclip(self.model_cfg["size"], self.model_cfg["pretrained"])
+        self.model = get_viclip(self.model_cfg["size"], self.model_cfg["pretrained"], tokenizer_path=tokenizer_path)
         self.device = get_device(gpu_number)
         self.clip = self.model["viclip"]
         self.tokenizer = self.model["tokenizer"]
