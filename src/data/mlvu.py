@@ -181,7 +181,7 @@ class MLVU(Manager):
                 # Check if video exists
                 if not os.path.exists(video_save_path):
                     print(f"Warning: Video not found for {video_id} at {video_save_path}, skipping...")
-                    continue
+                    # continue
                 
                 # Handle subtitles if present
                 subtitle_path = None

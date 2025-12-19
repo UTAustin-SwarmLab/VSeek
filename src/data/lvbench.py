@@ -136,7 +136,7 @@ class LVBench(Manager):
                         self._decode_video(item["video_data"], video_save_path)
                     else:
                         print(f"Warning: Video not found for {video_id}, skipping...")
-                        continue
+                        # continue
                 
                 # Handle subtitles if present
                 subtitle_path = None

@@ -37,37 +37,37 @@ tools:
         # Dataset-specific configurations
         lvb:
           name: "lvb"
-          dataset_path: "/nas/mars/dataset/longvideobench/LongVideoBench/"
-          burned_path: "/nas/mars/dataset/longvideobench/"
+          dataset_path: "/work/11123/harshgoel99/vista/datasets/longvideobench/LongVideoBench/"
+          burned_path: "/work/11123/harshgoel99/vista/datasets/longvideobench/"
           enabled: true
         
         lvbench:
           name: "lvbench"
-          dataset_path: "/nas/mars/dataset/LVBench"
-          burned_path: "/nas/mars/dataset/LVBench/videos"
+          dataset_path: "/work/11123/harshgoel99/vista/datasets/LVBench"
+          burned_path: "/work/11123/harshgoel99/vista/datasets/LVBench/videos"
           enabled: true
         
         videomme:
           name: "videomme"
-          dataset_path: "/nas/mars/dataset/Video-MME"
-          burned_path: "/nas/mars/dataset/Video-MME/burn-subtitles"
+          dataset_path: "/work/11123/harshgoel99/vista/datasets/Video-MME"
+          burned_path: "/work/11123/harshgoel99/vista/datasets/Video-MME/burn-subtitles"
           enabled: true
         
         mlvu:
           name: "mlvu"
-          dataset_path: "/nas/mars/dataset/MLVU"
-          burned_path: "/nas/mars/dataset/MLVU"
+          dataset_path: "/work/11123/harshgoel99/vista/datasets/MLVU/MLVU"
+          burned_path: "/work/11123/harshgoel99/vista/datasets/MLVU/MLVU"
           enabled: true
         
       retriever:
         port: 9000
         server_url: "http://127.0.0.1:${.port}"
-        index_path: "/home/hg22723/vseek/dataset"
+        index_path: "/work/11123/harshgoel99/vista/vseek"
         topk: 4
         retriever_name: "ViClip"
         retriever_model: "ViClip"
-        retrieval_model_path: "/nas/mars/model_weights/viclip/ViClip-InternVid-10M-FLT.pth"
-        text_encoder_model_path: "/nas/mars/model_weights/viclip/bpe_simple_vocab_16e6.txt.gz"
+        retrieval_model_path: "/work/11123/harshgoel99/vista/model_weights/viclip/ViClip-InternVid-10M-FLT.pth"
+        text_encoder_model_path: "/work/11123/harshgoel99/vista/model_weights/viclip/bpe_simple_vocab_16e6.txt.gz"
         gpu_number: 0
         faiss_gpu: false
         dataset_name: ${..dataset.name}

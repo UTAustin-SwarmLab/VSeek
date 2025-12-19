@@ -93,7 +93,7 @@ class VideoSearchServer:
         """Initialize the video index by loading embeddings and subtitles."""
         
         # Determine max workers
-        default_workers = min(16, (os.cpu_count() or 16))
+        default_workers = min(4, (os.cpu_count() or 4))
         max_workers = int(os.getenv("VSEEK_WORKERS", default_workers))
         
         for dataset_name in self.entries.keys():
