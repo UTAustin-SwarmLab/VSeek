@@ -21,6 +21,7 @@ ray[default]
 tensordict>=0.8.0,<=0.10.0,!=0.9.0
 vllm==0.11.0
 xformers
+decord
 
 # Data Handling & Scientific Computing
 numpy
@@ -38,7 +39,7 @@ pylatexenc==2.10
 tqdm==4.67.1
 wandb==0.22.1
 qwen_vl_utils
-decord
+
 sentencepiece==0.2.1
 scipy==1.16.2
 setproctitle==1.3.7
@@ -101,3 +102,4 @@ wandb
 prompt-toolkit==3.0.52
 traitlets==5.14.2
 nest-asyncio==1.6.0
+flask
