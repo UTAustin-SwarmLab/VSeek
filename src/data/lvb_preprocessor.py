@@ -199,7 +199,7 @@ if __name__ == "__main__":
                         "index": idx,
                         "question": entry.get("question", ""),
                         "candidates": entry.get("candidates", []),
-                        "correct_choice": correct_choice,
+                        "correct_choice": str(correct_choice),
                         "metadata": entry.get("metadata", {}),
                         "paths": {
                             "raw_video_path": entry.get("paths", {}).get("raw_video_path"),
@@ -210,7 +210,7 @@ if __name__ == "__main__":
                             "video_search": {
                                 "execute_kwargs": {
                                     "topk": 4,
-                                    "video_id": entry.get("metadata", {}).get("video_id"),
+                                    "video_id": str(entry.get("metadata", {}).get("video_id")),
                                     "dataset": "lvb",
                                 },
                             },

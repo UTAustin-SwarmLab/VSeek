@@ -170,8 +170,8 @@ class LVBench(Manager):
                         "video_path": video_save_path,  # Same as raw for now
                     },
                     "metadata": {
-                        "video_id": video_id,
-                        "id": item.get("uid", video_id),
+                        "video_id": str(video_id),
+                        "id": str(item.get("uid", video_id)),
                         # Store original item for reference
                         "original_data": json.dumps(item),
                     },

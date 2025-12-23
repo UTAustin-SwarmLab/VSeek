@@ -186,8 +186,8 @@ class LongVideoBench(Manager):
                         "video_path": video_path,
                     },
                     "metadata": {
-                        "video_id": item["video_id"],
-                        "id": item["id"],
+                        "video_id": str(item["video_id"]),
+                        "id": str(item["id"]),
                         "original_data": json.dumps(item),
                     },
 
