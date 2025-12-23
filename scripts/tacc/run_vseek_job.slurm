@@ -187,9 +187,17 @@ echo "Starting training..."
 
 
 # Setup training variables
-# Use absolute paths to avoid Hydra/OmegaConf relative path issues
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# Use SLURM_SUBMIT_DIR or hardcoded path (BASH_SOURCE doesn't work reliably in SLURM)
+PROJECT_ROOT="${SLURM_SUBMIT_DIR:-/home1/11123/harshgoel99/VSeek-R1}"
+# If submitted from scripts/tacc, go up two levels
+if [[ "$PROJECT_ROOT" == */scripts/tacc ]]; then
+    PROJECT_ROOT="$(cd "$PROJECT_ROOT/../.." && pwd)"
+fi
+# Fallback to hardcoded path if SLURM_SUBMIT_DIR is wrong (e.g., /var/spool)
+if [[ ! -d "$PROJECT_ROOT/src/vseek" ]]; then
+    echo "Warning: PROJECT_ROOT=$PROJECT_ROOT doesn't contain src/vseek, using hardcoded path"
+    PROJECT_ROOT="/home1/11123/harshgoel99/VSeek-R1"
+fi
 PROJECT_DIR="${PROJECT_ROOT}/src/vseek"
 CONFIG_PATH="${PROJECT_DIR}/config"
 MODEL_PATH="Qwen/Qwen3-VL-4B-Thinking"
@@ -199,6 +207,10 @@ CHECKPOINT_DIR="/work/11123/harshgoel99/vista/checkpoints"
 
 echo "PROJECT_ROOT: $PROJECT_ROOT"
 echo "CONFIG_PATH: $CONFIG_PATH"
+
+# Change to project root for relative paths
+cd "$PROJECT_ROOT" || exit 1
+echo "Working directory: $(pwd)"
 
 # Training command based on scripts/train/vseek_grpo_tag_qvl34Bt_vllm_tagsummary.sh
 # Ensure we are in the project root
@@ -228,7 +240,11 @@ export MASTER_PORT=${MASTER_PORT:-29651}
 export CUDA_LAUNCH_BLOCKING=1
 
 # Disable torch.compile for vLLM compatibility (must be exported for Ray workers)
+# Note: VLLM_USE_V1=1 is required by verl; use enforce_eager=True to avoid torch.compile issues
+export TORCH_COMPILE_DISABLE=1
+export TORCH_DYNAMO_DISABLE=1
 export VLLM_USE_V1=1
+export RAY_memory_usage_threshold=0.98  # Allow up to 98% memory before killing
 
 module load gcc/13.2.0 cuda/12.8
 python3 -m vseek.trainer.main_ppo \
@@ -255,17 +271,18 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.actor.entropy_coeff=0.001 \
     actor_rollout_ref.actor.use_dynamic_bsz=True \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=65536 \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768 \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
-    actor_rollout_ref.actor.fsdp_config.param_offload=True \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+    actor_rollout_ref.actor.fsdp_config.param_offload=False \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=128 \
+    +ray_kwargs.ray_init.address="auto" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.max_num_batched_tokens=98304 \
+    actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=4 \
     actor_rollout_ref.rollout.max_model_len=8536 \
     actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.free_cache_engine=True  \
     actor_rollout_ref.rollout.enforce_eager=True \
     actor_rollout_ref.rollout.n=5 \
@@ -275,7 +292,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=128 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=False \
-    actor_rollout_ref.ref.fsdp_config.param_offload=True \
+    actor_rollout_ref.ref.fsdp_config.param_offload=False \
     algorithm.use_kl_in_reward=False \
     trainer.critic_warmup=0 \
     trainer.logger='["console","wandb"]' \
@@ -284,20 +301,19 @@ python3 -m vseek.trainer.main_ppo \
     trainer.default_local_dir="${CHECKPOINT_DIR}/${PROJECT_NAME}/${EXPERIMENT_NAME}" \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=$((SLURM_JOB_NUM_NODES)) \
-    +ray_kwargs.ray_init.address="auto" \
     trainer.save_freq=50 \
     trainer.test_freq=20 \
     data.train_files=/work/11123/harshgoel99/vista/vseek/tagsummary/train.parquet \
     data.val_files=/work/11123/harshgoel99/vista/vseek/tagsummary/test.parquet \
     actor_rollout_ref.rollout.multi_turn.tool_config_path="$TOOL_CONFIG_TMP" \
-    actor_rollout_ref.rollout.agent.agent_loop_config_path="src/vseek/config/retriever/vllm_agent.yaml" \
+    actor_rollout_ref.rollout.agent.agent_loop_config_path="${PROJECT_ROOT}/src/vseek/config/retriever/vllm_agent.yaml" \
     actor_rollout_ref.rollout.agent.default_agent_loop="vseek_tag_summary_agent" \
     trainer.total_epochs=50 \
     trainer.val_before_train=True \
-    trainer.log_val_generations=20
+    trainer.log_val_generations=20 \
+    custom_reward_function.path="${PROJECT_ROOT}/src/vseek/trainer/reward/vseekreward.py"
 
 # Cleanup server and temp files
 echo "Training finished. Stopping server..."
 kill $SERVER_PID
 rm "$TOOL_CONFIG_TMP"
-
