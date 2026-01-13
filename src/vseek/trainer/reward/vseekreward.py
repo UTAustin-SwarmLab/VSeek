@@ -100,7 +100,8 @@ def compute_score(
     extra_info,
     method="strict",
     format_score=0.0,
-    score=1.0,
+    score={'em':1.0},
+    reward_type='em',
     **kwargs,
 ):
     """The scoring function for exact match (EM).
@@ -115,6 +116,12 @@ def compute_score(
     answer = extract_solution(solution_str=solution_str)
     open_count, close_count = count_answer_tags(solution_str)
     do_print = random.randint(1, 256) == 1
+    if reward_type == 'puls':
+        score_keys = ['puls', 'em']
+    elif reward_type == 'em':
+        score_keys = ['em']
+    else:
+        raise ValueError(f"Invalid reward type: {reward_type}")
 
     if do_print:
         print("--------------------------------")
@@ -124,21 +131,49 @@ def compute_score(
         else:
             print("Extracted answer: None!")
         print(f"Solution string: {solution_str}")
+    
+    total_score = 0.0
+    normalizer = 0.0
 
-    if answer is None:
-        return 0
-    else:
-        if em_check(answer, ground_truth):
-            if open_count > 10 or close_count > 10:  # prevent output a lot of </answer>
-                score = score / 4
-                return score
-            return score
+    for score_key in score_keys:
+        normalizer += score[score_key]
+        if answer is None:
+            return 0
         else:
-            if format_score > 0:
-                is_valid, _msg = is_valid_sequence(solution_str)
-                if not is_valid:
-                    return 0.0
-            return format_score
+            if score_key == 'em':
+                if em_check(answer, ground_truth):
+                    if open_count > 10 or close_count > 10:  # prevent output a lot of </answer>
+                        total_score += score[score_key] / 4
+                    else:
+                        total_score += score[score_key]
+                else:
+                    if format_score > 0:
+                        is_valid, _msg = is_valid_sequence(solution_str)
+                        if not is_valid:
+                            total_score += 0.0
+                    else:
+                        total_score += format_score
+            elif score_key == 'puls':
+                all_puls = extra_info.get('tool_extra_fields', {}).get('puls', {})
+                puls_score = 0.0
+                consolidated_puls = {}
+                puls_threshold = kwargs.get('puls_threshold')
+                for puls in all_puls:   
+                    for key, value in puls.items():
+                        consolidated_puls[key] = max(consolidated_puls[key], value) if key in consolidated_puls else value
+                
+                for key, value in consolidated_puls.items():
+                    if value > puls_threshold:
+                        puls_score += 1.0
+                        
+                # If there are no puls specifications, we don't count this score
+                if len(consolidated_puls) > 0:
+                    puls_score = puls_score / len(consolidated_puls)
+                    total_score += puls_score*score[score_key]
+                else:
+                    normalizer -= score[score_key]
+                
+    return total_score / normalizer
 
 
 def compute_score_subem(solution_str, ground_truth, data_source, extra_info, method="strict", format_score=0.0, score=1.0):

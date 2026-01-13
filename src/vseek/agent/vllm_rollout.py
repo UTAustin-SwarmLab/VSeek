@@ -13,6 +13,7 @@ from verl.experimental.agent_loop.tool_parser import FunctionCall, ToolParser
 from verl.tools.schemas import ToolResponse
 from verl.utils.profiler import simple_timer
 
+from vseek.trainer.reward.vseekrewardmanager import VSeekRewardManager
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
