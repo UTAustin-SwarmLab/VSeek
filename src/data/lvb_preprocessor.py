@@ -212,6 +212,7 @@ if __name__ == "__main__":
                                     "topk": 4,
                                     "video_id": str(entry.get("metadata", {}).get("video_id")),
                                     "dataset": "lvb",
+                                    "puls": entry.get("puls", {}),
                                 },
                             },
                         },
