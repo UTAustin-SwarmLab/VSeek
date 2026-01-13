@@ -265,7 +265,7 @@ def rollout_agent_data(
     rollout_config.actor_rollout_ref.rollout.tensor_model_parallel_size = 1
     rollout_config.actor_rollout_ref.rollout.multi_turn.max_assistant_turns = 3
     rollout_config.actor_rollout_ref.rollout.multi_turn.enable = True
-    rollout_config.actor_rollout_ref.rollout.multi_turn.tool_config_path = "./scripts/tests/agent/test_config.yaml"
+    rollout_config.actor_rollout_ref.rollout.multi_turn.tool_config_path = "./src/vseek/config/retriever/toolconfig.yaml"
     rollout_config.actor_rollout_ref.rollout.multi_turn.max_tool_response_length = 1024
     rollout_config.actor_rollout_ref.rollout.max_num_batched_tokens = 65536
     rollout_config.actor_rollout_ref.rollout.temperature = 0.0
@@ -284,7 +284,7 @@ def rollout_agent_data(
     # model_config = HFModelConfig(path=hf_local_model_path)
     
     
-    rollout_config.actor_rollout_ref.rollout.agent.agent_loop_config_path = "./scripts/tests/agent/test_agent.yaml"
+    rollout_config.actor_rollout_ref.rollout.agent.agent_loop_config_path = "./src/vseek/config/retriever/vllm_agent.yaml"
 
     agent_loop_manager = AgentLoopManager(rollout_config)
     # Minibatch inference with periodic writes
