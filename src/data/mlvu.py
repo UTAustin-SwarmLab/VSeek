@@ -141,86 +141,91 @@ class MLVU(Manager):
         mlvu_dataset = self.merge_category_files()
         print(f"Loading MLVU dataset from {self._dataset_path}...")
         
-
+        if os.path.exists(os.path.join(self._dataset_path, "puls.json")):
+            print(f"Loading MLVU dataset from {os.path.join(self._dataset_path, 'puls.json')}")
+            with open(os.path.join(self._dataset_path, "puls.json"), "r") as f:
+                dataset = json.load(f)
+            return dataset
+        else:
         
-        print(f"Loaded {len(mlvu_dataset)} samples from MLVU")
-        
-        # Process each item in the dataset
-        for idx, item in enumerate(tqdm(mlvu_dataset, desc="Processing MLVU")):
-            try:
-                # Extract video information
-                video_id = item.get("video").split(".")[0]
-                question = item.get("question", "")
-                
-                # Handle different answer formats
-                candidates = []
-                if "options" in item:
-                    candidates = item["options"]
-                elif "candidates" in item:
-                    candidates = item["candidates"]
-                elif "choices" in item:
-                    candidates = item["choices"]
-                answer = None
-                if "answer" in item:
-                    answer = item["answer"]
-                    answer = str(candidates.index(answer))
-                    print(f"Answer: {answer}")
+            print(f"Loaded {len(mlvu_dataset)} samples from MLVU")
+            
+            # Process each item in the dataset
+            for idx, item in enumerate(tqdm(mlvu_dataset, desc="Processing MLVU")):
+                try:
+                    # Extract video information
+                    video_id = item.get("video").split(".")[0]
+                    question = item.get("question", "")
                     
-                
-                # Handle candidates/options - MLVU might have them embedded in question[]
+                    # Handle different answer formats
+                    candidates = []
+                    if "options" in item:
+                        candidates = item["options"]
+                    elif "candidates" in item:
+                        candidates = item["candidates"]
+                    elif "choices" in item:
+                        candidates = item["choices"]
+                    answer = None
+                    if "answer" in item:
+                        answer = item["answer"]
+                        answer = str(candidates.index(answer))
+                        print(f"Answer: {answer}")
+                        
+                    
+                    # Handle candidates/options - MLVU might have them embedded in question[]
 
-        
-                # Determine paths for video storage
-                video_filename = item.get("video")
-                # Handle different video path formats
-                if not video_filename.endswith(('.mp4', '.avi', '.mov', '.mkv')):
-                    video_filename = f"{video_filename}.mp4"
-                
-                video_save_path = os.path.join(self._dataset_path, "video", video_filename)
-                
-                # Check if video exists
-                if not os.path.exists(video_save_path):
-                    print(f"Warning: Video not found for {video_id} at {video_save_path}, skipping...")
+            
+                    # Determine paths for video storage
+                    video_filename = item.get("video")
+                    # Handle different video path formats
+                    if not video_filename.endswith(('.mp4', '.avi', '.mov', '.mkv')):
+                        video_filename = f"{video_filename}.mp4"
+                    
+                    video_save_path = os.path.join(self._dataset_path, "video", video_filename)
+                    
+                    # Check if video exists
+                    if not os.path.exists(video_save_path):
+                        print(f"Warning: Video not found for {video_id} at {video_save_path}, skipping...")
+                        continue
+                    
+                    # Handle subtitles if present
+                    subtitle_path = None
+                    # Determine category
+                    category = item.get("category", item.get("task_type", item.get("type", "general")))
+                    
+                    # Build entry in LVB-compatible format
+                    question_text = "\n This is a multiple choice question. You must choose the correct answer as a number. \n"
+                    question_text += f"Question: {question} \n"
+                    
+                    entry = {
+                        "question": question_text,
+                        "candidates": candidates,
+                        "correct_choice": answer,
+                        "paths": {
+                            "raw_video_path": video_save_path,
+                            "subtitle_path": subtitle_path,
+                            "video_path": video_save_path,
+                        },
+                        "metadata": {
+                            "video_id": str(video_id),
+                            "id": str(item.get("id", video_id)),
+                            "original_data": json.dumps(item),
+                        },
+                    }
+                    
+                    category_buckets[category].append(entry)
+                    
+                except Exception as e:
+                    print(f"Error processing item {idx}: {e}")
+                    print(traceback.format_exc())
                     continue
-                
-                # Handle subtitles if present
-                subtitle_path = None
-                # Determine category
-                category = item.get("category", item.get("task_type", item.get("type", "general")))
-                
-                # Build entry in LVB-compatible format
-                question_text = "\n This is a multiple choice question. You must choose the correct answer as a number. \n"
-                question_text += f"Question: {question} \n"
-                
-                entry = {
-                    "question": question_text,
-                    "candidates": candidates,
-                    "correct_choice": answer,
-                    "paths": {
-                        "raw_video_path": video_save_path,
-                        "subtitle_path": subtitle_path,
-                        "video_path": video_save_path,
-                    },
-                    "metadata": {
-                        "video_id": str(video_id),
-                        "id": str(item.get("id", video_id)),
-                        "original_data": json.dumps(item),
-                    },
-                }
-                
-                category_buckets[category].append(entry)
-                
-            except Exception as e:
-                print(f"Error processing item {idx}: {e}")
-                print(traceback.format_exc())
-                continue
+            
+            # Flatten list of all entries from each category
+            all_entries = [entry for entries in category_buckets.values() for entry in entries]
+            print(f"Successfully processed {len(all_entries)} entries across {len(category_buckets)} categories")
+            
+            return all_entries
         
-        # Flatten list of all entries from each category
-        all_entries = [entry for entries in category_buckets.values() for entry in entries]
-        print(f"Successfully processed {len(all_entries)} entries across {len(category_buckets)} categories")
-        
-        return all_entries
-    
     def save_it_as_vseek_data(self, desired_interval_in_sec: int = 1):
         """
         Index videos by window size and save embeddings.
