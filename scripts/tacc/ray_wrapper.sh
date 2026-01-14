@@ -25,8 +25,8 @@ export HF_HUB_CACHE="${HF_HOME}/hub"
 export TRANSFORMERS_CACHE="${HF_HOME}/hub"
 
 # 4. Disable torch.compile for vLLM compatibility (V1 engine required by verl)
-export TORCH_COMPILE_DISABLE=1
-export TORCH_DYNAMO_DISABLE=1
+# export TORCH_COMPILE_DISABLE=1
+# export TORCH_DYNAMO_DISABLE=1
 export VLLM_USE_V1=1
 
 # 4. Debugging: Verify GPU visibility

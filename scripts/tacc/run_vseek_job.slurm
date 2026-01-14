@@ -5,7 +5,7 @@
 #SBATCH -p gh
 #SBATCH -N 2
 #SBATCH -n 2
-#SBATCH --cpus-per-task=64
+#SBATCH --cpus-per-task=16
 #SBATCH -t 48:00:00
 #SBATCH --mem=0
 
@@ -97,7 +97,7 @@ worker_num=$((SLURM_JOB_NUM_NODES - 1))
 if [ $worker_num -gt 0 ]; then
     for ((i = 1; i <= worker_num; i++)); do
         node_i=${nodes_array[$i]}
-        ssh "$node_i" "source ~/.bashrc && conda activate vseek-vllm && ray stop --force; rm -rf /tmp/ray/session_*" || true
+        ssh "$node_i" "source ~/.bashrc && conda activate vseek-vllm2 && ray stop --force; rm -rf /tmp/ray/session_*" || true
     done
 fi
 
@@ -119,7 +119,7 @@ env | grep -E "^(PATH|LD_LIBRARY_PATH|CUDA_|NCCL_|Ray_|CONDA_)" > worker_env.sh
 echo "Launching Ray Head on $HEAD_NODE (local)..."
 # We run wrapper locally to setup env, then start ray
 scripts/tacc/ray_wrapper.sh \
-    ray start --head --node-ip-address="$head_node_ip" --port=$port --num-gpus=1 --dashboard-host=0.0.0.0 --block &
+    ray start --head --node-ip-address="$head_node_ip" --port=$port --num-gpus=1 --num-cpus=8 --dashboard-host=0.0.0.0 --block &
 sleep 10
 
 # 2. Start Ray Workers on remaining nodes via SSH
@@ -134,7 +134,7 @@ if [ $worker_num -gt 0 ]; then
         scp worker_env.sh "$node_i":~/worker_env.sh
         
         # Execute wrapper via SSH
-        ssh "$node_i" "chmod +x ~/ray_wrapper.sh && ~/ray_wrapper.sh ray start --address '$ip_head' --num-gpus=1 --block" &
+        ssh "$node_i" "chmod +x ~/ray_wrapper.sh && ~/ray_wrapper.sh ray start --address '$ip_head' --num-gpus=1 --num-cpus=8 --block" &
         sleep 5
     done
 fi
@@ -208,6 +208,66 @@ CHECKPOINT_DIR="/work/11123/harshgoel99/vista/checkpoints"
 echo "PROJECT_ROOT: $PROJECT_ROOT"
 echo "CONFIG_PATH: $CONFIG_PATH"
 
+
+# Start the server in the background on the Head Node
+# We bind it to GPU 0 as requested
+echo "Starting server..."
+SERVER_PORT=8899
+SERVER_URL="http://0.0.0.0:${SERVER_PORT}"
+# SERVER_URL="http://${HEAD_NODE}:${SERVER_PORT}"
+# Use wrapper to ensure env is correct, but run locally as we are on Head Node
+python3 -u ${PROJECT_ROOT}/src/vseek/tools/server.py \
+    retriever.window_size=8 \
+    "dataset.name=['lvb','lvbench','videomme','mlvu']" \
+    retriever.server_url="$SERVER_URL" \
+    > ${PROJECT_ROOT}/server_log.txt 2>&1 &
+SERVER_PID=$!
+
+
+
+echo "Server PID: $SERVER_PID"
+echo "Waiting for server to initialize..."
+sleep 120  # Give the server time to load models and indices
+
+
+echo "Testing server..."
+python3 -c "
+import requests                                                                                                            
+url = '${head_node_ip}:${SERVER_PORT}/search'
+payload = {
+    'query': 'test',
+    'dataset_name': 'videomme',  
+    'video_id': 'vzfTpidE5wg',     
+    'topk': 5
+}
+try:
+    resp = requests.post(url, json=payload)
+    print(resp.status_code)
+    print(resp.json())
+except Exception as e:
+    print(e)
+"
+
+python3 -c " 
+import requests                                                                                                           
+url = '${head_node_ip}:${SERVER_PORT}/search_subtitle'
+payload = {
+    'query': 'test',
+    'dataset_name': 'videomme',  
+    'video_id': 'vzfTpidE5wg',     
+    'topk': 5
+}
+try:
+    resp = requests.post(url, json=payload)
+    print(resp.status_code)
+    print(resp.json())
+except Exception as e:
+    print(e)
+"
+
+# Run the training job
+echo "Starting training..."
+
 # Change to project root for relative paths
 cd "$PROJECT_ROOT" || exit 1
 echo "Working directory: $(pwd)"
@@ -223,7 +283,7 @@ fi
 # Create a temporary tool config with the correct server URL
 # This is necessary because the rollout worker reads the config file directly from disk
 TOOL_CONFIG_SRC="${PROJECT_DIR}/config/retriever/toolconfig.yaml"
-TOOL_CONFIG_TMP="toolconfig_${SLURM_JOB_ID}.yaml"
+TOOL_CONFIG_TMP="${PROJECT_DIR}/toolconfig_${SLURM_JOB_ID}.yaml"
 
 if [ ! -f "$TOOL_CONFIG_SRC" ]; then
     echo "Error: $TOOL_CONFIG_SRC not found. Ensure you are running from project root."
@@ -232,7 +292,8 @@ if [ ! -f "$TOOL_CONFIG_SRC" ]; then
 fi
 
 # Replace localhost with HEAD_NODE in the config
-sed "s/127.0.0.1/${HEAD_NODE}/g" "$TOOL_CONFIG_SRC" > "$TOOL_CONFIG_TMP"
+
+sed "s/127.0.0.1/${head_node_ip}/g" "$TOOL_CONFIG_SRC" | sed "s/port: 9000/port: ${SERVER_PORT}/g" > "$TOOL_CONFIG_TMP"
 
 set -x
 ulimit -n 65535
@@ -241,8 +302,8 @@ export CUDA_LAUNCH_BLOCKING=1
 
 # Disable torch.compile for vLLM compatibility (must be exported for Ray workers)
 # Note: VLLM_USE_V1=1 is required by verl; use enforce_eager=True to avoid torch.compile issues
-export TORCH_COMPILE_DISABLE=1
-export TORCH_DYNAMO_DISABLE=1
+# export TORCH_COMPILE_DISABLE=1
+# export TORCH_DYNAMO_DISABLE=1
 export VLLM_USE_V1=1
 export RAY_memory_usage_threshold=0.98  # Allow up to 98% memory before killing
 
@@ -251,9 +312,10 @@ python3 -m vseek.trainer.main_ppo \
     --config-path="$CONFIG_PATH" \
     --config-name='lvb_grpo' \
     algorithm.adv_estimator=grpo \
-    data.train_batch_size=128 \
+    data.train_batch_size=64 \
+    data.val_batch_size=64 \
     data.max_prompt_length=2536 \
-    data.max_response_length=6000 \
+    data.max_response_length=5656 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
@@ -261,8 +323,8 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps=50 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=128 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=16 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.freeze_vision_tower=True \
     actor_rollout_ref.actor.clip_ratio_high=0.28 \
@@ -270,29 +332,30 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.actor.entropy_coeff=0.001 \
-    actor_rollout_ref.actor.use_dynamic_bsz=True \
+    actor_rollout_ref.actor.use_dynamic_bsz=False\
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768 \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
-    actor_rollout_ref.actor.fsdp_config.param_offload=False \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=128 \
+    actor_rollout_ref.actor.fsdp_config.param_offload=True \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
     +ray_kwargs.ray_init.address="auto" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=4 \
-    actor_rollout_ref.rollout.max_model_len=8536 \
+    actor_rollout_ref.rollout.max_model_len=8192 \
     actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
     actor_rollout_ref.rollout.free_cache_engine=True  \
-    actor_rollout_ref.rollout.enforce_eager=True \
-    actor_rollout_ref.rollout.n=5 \
+    actor_rollout_ref.rollout.agent.num_workers=1 \
+    actor_rollout_ref.rollout.enforce_eager=False \
+    actor_rollout_ref.rollout.n=8 \
     actor_rollout_ref.rollout.multi_turn.format="hermes" \
     actor_rollout_ref.rollout.over_sample_rate=0.1 \
     actor_rollout_ref.rollout.mode=async \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=128 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=False \
-    actor_rollout_ref.ref.fsdp_config.param_offload=False \
+    actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.use_kl_in_reward=False \
     trainer.critic_warmup=0 \
     trainer.logger='["console","wandb"]' \
@@ -309,11 +372,11 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.rollout.agent.agent_loop_config_path="${PROJECT_ROOT}/src/vseek/config/retriever/vllm_agent.yaml" \
     actor_rollout_ref.rollout.agent.default_agent_loop="vseek_tag_summary_agent" \
     trainer.total_epochs=50 \
-    trainer.val_before_train=True \
+    trainer.val_before_train=False \
     trainer.log_val_generations=20 \
     custom_reward_function.path="${PROJECT_ROOT}/src/vseek/trainer/reward/vseekreward.py"
 
 # Cleanup server and temp files
 echo "Training finished. Stopping server..."
 kill $SERVER_PID
-rm "$TOOL_CONFIG_TMP"
+ray stop --force

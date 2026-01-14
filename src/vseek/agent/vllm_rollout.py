@@ -281,12 +281,12 @@ class VSeekTagAgentLoop(VSeekToolAgentLoop):
     @classmethod
     def init_class(cls, config, tokenizer, processor, **kwargs):
         super().init_class(config, tokenizer, processor, **kwargs)
-        print("Initializing tag agent")
+        # print("Initializing tag agent")
         tags: list[str] = kwargs.get(
             "tags",
             [r"<search>(.*?)</search>", r"<search_subtitle>(.*?)</search_subtitle>"],
         )
-        print(f"Tags: {tags}")
+        # print(f"Tags: {tags}")
         cls.tool_parser = _VSeekTagToolParser(tokenizer, tags)
 
 @register("vseek_tag_summary_agent")
@@ -294,12 +294,12 @@ class VSeekTagSummaryAgentLoop(VSeekToolAgentLoop):
     @classmethod
     def init_class(cls, config, tokenizer, processor, **kwargs):
         super().init_class(config, tokenizer, processor, **kwargs)
-        print("Initializing tag summary agent")
+        # print("Initializing tag summary agent")
         tags: list[str] = kwargs.get(
             "tags",
             [r"<search>(.*?)</search>", r"<search_subtitle>(.*?)</search_subtitle>", r"<search_summary>(.*?)</search_summary>"],
         )
-        print(f"Tags: {tags}")
+        # print(f"Tags: {tags}")
         cls.tool_parser = _VSeekTagToolParser(tokenizer, tags)
         
 @register("vseek_json_agent")

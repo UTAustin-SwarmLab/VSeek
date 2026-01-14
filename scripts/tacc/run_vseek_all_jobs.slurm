@@ -3,10 +3,10 @@
 #SBATCH -o vseek_job-%j.out
 #SBATCH -e vseek_job-%j.err
 #SBATCH -p gh
-#SBATCH -N 2
+#SBATCH -N 8
 #SBATCH --ntasks-per-node=1    # Important for Ray: 1 task (daemon) per node
 #SBATCH --cpus-per-task=64
-#SBATCH -t 00:30:00
+#SBATCH -t 24:00:00
 #SBATCH --mem=0
 
 # USAGE: sbatch run_vseek_job.slurm
@@ -40,6 +40,22 @@ export HF_HOME="${WORK}/huggingface"
 export HF_HUB_CACHE="${HF_HOME}/hub"
 export TRANSFORMERS_CACHE="${HF_HOME}/hub"
 mkdir -p "$HF_HOME"
+
+# Setup Paths
+PROJECT_ROOT="${SLURM_SUBMIT_DIR:-/home1/11123/harshgoel99/VSeek-R1}"
+PROJECT_DIR="${PROJECT_ROOT}/src/vseek"
+CONFIG_PATH="${PROJECT_DIR}/config"
+MODEL_PATH="Qwen/Qwen3-VL-4B-Thinking"
+PROJECT_NAME="vseek"
+EXPERIMENT_NAME="qwen3-4bt_vl_lvbvmmelvbench-emreward-vllm-wtool-tagsummary"
+CHECKPOINT_DIR="/work/11123/harshgoel99/vista/checkpoints"
+
+WRAPPER_SCRIPT="${PROJECT_ROOT}/scripts/tacc/ray_wrapper.sh"
+if [ ! -f "$WRAPPER_SCRIPT" ]; then
+    echo "Error: Wrapper script not found at $WRAPPER_SCRIPT"
+    exit 1
+fi
+chmod +x "$WRAPPER_SCRIPT"
 
 # ==========================================
 # 2. HEAD NODE IDENTIFICATION
@@ -78,7 +94,7 @@ echo "----------------------------------------"
 # A. Start Ray Head (Local execution on the first node)
 # We do not use srun here because the batch script is already running on the head node.
 echo "Starting Ray Head on $HEAD_NODE..."
-ray start --head \
+"$WRAPPER_SCRIPT" ray start --head \
     --node-ip-address="$HEAD_IP" \
     --port=$RAY_PORT \
     --dashboard-port=$RAY_DASHBOARD_PORT \
@@ -86,6 +102,7 @@ ray start --head \
     --max-worker-port=$RAY_MAX_WORKER_PORT \
     --num-gpus=1 \
     --block &
+
 # Store PID to kill later if needed, though 'ray stop' handles it
 HEAD_PID=$!
 sleep 10
@@ -102,7 +119,7 @@ for ((i = 1; i <= NUM_WORKERS; i++)); do
     # Note: We explicitly source bashrc/conda again to ensure the non-interactive srun shell has the env.
     srun --nodes=1 --ntasks=1 -w $node_i \
         bash -c "source ~/.bashrc && conda activate vseek-vllm && \
-                 ray start --address $HEAD_IP:$RAY_PORT --num-gpus=1 --block" &
+                "$WRAPPER_SCRIPT" ray start --address $HEAD_IP:$RAY_PORT --num-gpus=1 --block" &
     sleep 5
 done
 
@@ -121,45 +138,94 @@ done
 # Print Status
 ray status --address "$HEAD_IP:$RAY_PORT"
 
-# ==========================================
-# 4. START TOOL SERVER (Optional)
-# ==========================================
-# Uncomment this block if you want the server to run
-# echo "Starting Tool Server on $HEAD_IP:$SERVER_PORT..."
-# python3 -u src/vseek/tools/server.py \
-#     retriever.window_size=8 \
-#     "dataset.name=['lvb','lvbench','videomme','mlvu']" \
-#     retriever.server_url="http://${HEAD_IP}:${SERVER_PORT}" \
-#     > server_log.txt 2>&1 &
-# SERVER_PID=$!
-# sleep 60
 
-# ==========================================
-# 5. TRAINING JOB
-# ==========================================
 
-# Setup Paths
-PROJECT_ROOT="${SLURM_SUBMIT_DIR:-/home1/11123/harshgoel99/VSeek-R1}"
-PROJECT_DIR="${PROJECT_ROOT}/src/vseek"
-CONFIG_PATH="${PROJECT_DIR}/config"
-MODEL_PATH="Qwen/Qwen3-VL-4B-Thinking"
-PROJECT_NAME="vseek"
-EXPERIMENT_NAME="qwen3-4bt_vl_lvbvmmelvbench-emreward-vllm-wtool-tagsummary"
-CHECKPOINT_DIR="/work/11123/harshgoel99/vista/checkpoints"
 
 cd "$PROJECT_ROOT" || exit 1
+echo "Working directory: $(pwd) PROJECT_ROOT: $PROJECT_ROOT"
 
 # Handle Tool Config (Server URL Injection)
 TOOL_CONFIG_SRC="${PROJECT_DIR}/config/retriever/toolconfig.yaml"
 TOOL_CONFIG_TMP="toolconfig_${SLURM_JOB_ID}.yaml"
 
+echo "TOOL_CONFIG_SRC: $TOOL_CONFIG_SRC"
+
+# ==========================================
+# 4. START TOOL SERVER (Optional)
+# ==========================================
+# Start the server in the background on the Head Node
+# We bind it to GPU 0 as requested
+echo "Starting server..."
+SERVER_PORT=8899
+SERVER_URL="http://0.0.0.0:${SERVER_PORT}"
+# SERVER_URL="http://${HEAD_NODE}:${SERVER_PORT}"
+# Use wrapper to ensure env is correct, but run locally as we are on Head Node
+python3 -u ${PROJECT_ROOT}/src/vseek/tools/server.py \
+    retriever.window_size=8 \
+    "dataset.name=['lvb','lvbench','videomme','mlvu']" \
+    retriever.server_url="$SERVER_URL" \
+    > ${PROJECT_ROOT}/server_log.txt 2>&1 &
+SERVER_PID=$!
+
+
+
+echo "Server PID: $SERVER_PID"
+echo "Waiting for server to initialize..."
+sleep 120  # Give the server time to load models and indices
+
+
+echo "Testing server..."
+python3 -c "
+import requests                                                                                                            
+url = '${HEAD_IP}:${SERVER_PORT}/search'
+payload = {
+    'query': 'test',
+    'dataset_name': 'videomme',  
+    'video_id': 'vzfTpidE5wg',     
+    'topk': 5
+}
+try:
+    resp = requests.get(url, params=payload)
+    print(resp.status_code)
+    print(resp.json())
+except Exception as e:
+    print(e)
+"
+
+python3 -c " 
+import requests                                                                                                           
+url = '${HEAD_IP}:${SERVER_PORT}/search_subtitle'
+payload = {
+    'query': 'test',
+    'dataset_name': 'videomme',  
+    'video_id': 'vzfTpidE5wg',     
+    'topk': 5
+}
+try:
+    resp = requests.get(url, params=payload)
+    print(resp.status_code)
+    print(resp.json())
+except Exception as e:
+    print(e)
+"
+
+# Run the training job
+echo "Starting training..."
+
+
+# ==========================================
+# 5. TRAINING JOB
+# ==========================================
+
+
 if [ -f "$TOOL_CONFIG_SRC" ]; then
     # Inject the specific Head IP and Server Port
-    sed "s/127.0.0.1/${HEAD_IP}/g" "$TOOL_CONFIG_SRC" | sed "s/9000/${SERVER_PORT}/g" > "$TOOL_CONFIG_TMP"
+    sed "s/127.0.0.1/${HEAD_IP}/g" "$TOOL_CONFIG_SRC" | sed "s/port: 9000/port: ${SERVER_PORT}/g" > "$TOOL_CONFIG_TMP"
 else 
     echo "Warning: Tool config not found at $TOOL_CONFIG_SRC"
     touch "$TOOL_CONFIG_TMP" # Prevent crash if file missing
 fi
+
 
 # Training Variables
 export MASTER_PORT=${MASTER_PORT:-29651}
@@ -178,8 +244,9 @@ python3 -m vseek.trainer.main_ppo \
     --config-name='lvb_grpo' \
     algorithm.adv_estimator=grpo \
     data.train_batch_size=128 \
+    data.val_batch_size=128 \
     data.max_prompt_length=2536 \
-    data.max_response_length=6000 \
+    data.max_response_length=5656 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
@@ -187,8 +254,8 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps=50 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=128 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=16 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.freeze_vision_tower=True \
     actor_rollout_ref.actor.clip_ratio_high=0.28 \
@@ -198,27 +265,28 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.actor.entropy_coeff=0.001 \
     actor_rollout_ref.actor.use_dynamic_bsz=True \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768 \
+    actor_rollout_ref.rollout.agent.num_workers=1 \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
-    actor_rollout_ref.actor.fsdp_config.param_offload=False \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=128 \
+    actor_rollout_ref.actor.fsdp_config.param_offload=True \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
     +ray_kwargs.ray_init.address="auto" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=4 \
-    actor_rollout_ref.rollout.max_model_len=8536 \
+    actor_rollout_ref.rollout.max_model_len=8192 \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
     actor_rollout_ref.rollout.free_cache_engine=True  \
-    actor_rollout_ref.rollout.enforce_eager=True \
+    actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.n=5 \
     actor_rollout_ref.rollout.multi_turn.format="hermes" \
     actor_rollout_ref.rollout.over_sample_rate=0.1 \
     actor_rollout_ref.rollout.mode=async \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=128 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=False \
-    actor_rollout_ref.ref.fsdp_config.param_offload=False \
+    actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.use_kl_in_reward=False \
     trainer.critic_warmup=0 \
     trainer.logger='["console","wandb"]' \
@@ -230,12 +298,12 @@ python3 -m vseek.trainer.main_ppo \
     trainer.save_freq=50 \
     trainer.test_freq=20 \
     data.train_files=/work/11123/harshgoel99/vista/vseek/tagsummary/train.parquet \
-    data.val_files=/work/11123/harshgoel99/vista/vseek/tagsummary/train.parquet \
+    data.val_files=/work/11123/harshgoel99/vista/vseek/tagsummary/test.parquet \
     actor_rollout_ref.rollout.multi_turn.tool_config_path="$TOOL_CONFIG_TMP" \
     actor_rollout_ref.rollout.agent.agent_loop_config_path="${PROJECT_ROOT}/src/vseek/config/retriever/vllm_agent.yaml" \
     actor_rollout_ref.rollout.agent.default_agent_loop="vseek_tag_summary_agent" \
     trainer.total_epochs=50 \
-    trainer.val_before_train=True \
+    trainer.val_before_train=False \
     trainer.log_val_generations=20 \
     custom_reward_function.path="${PROJECT_ROOT}/src/vseek/trainer/reward/vseekreward.py"
 
@@ -250,5 +318,4 @@ if [ ! -z "$SERVER_PID" ]; then
     kill $SERVER_PID
 fi
 
-rm -f "$TOOL_CONFIG_TMP"
 ray stop --force

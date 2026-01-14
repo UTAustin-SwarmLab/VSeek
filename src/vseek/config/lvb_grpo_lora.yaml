@@ -40,6 +40,7 @@ actor_rollout_ref:
       sglang: {}
   actor:
     use_dynamic_bsz: False
+    ppo_micro_batch_size_per_gpu: 4  # Required when use_dynamic_bsz is False
     ppo_max_token_len_per_gpu: 32768
     grad_clip: 1.0
     clip_ratio: 0.30

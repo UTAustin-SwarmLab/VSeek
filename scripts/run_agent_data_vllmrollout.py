@@ -270,7 +270,6 @@ def rollout_agent_data(
     rollout_config.actor_rollout_ref.rollout.max_num_batched_tokens = 65536
     rollout_config.actor_rollout_ref.rollout.temperature = 0.0
     rollout_config.actor_rollout_ref.rollout.n = 1
-
     rollout_config.actor_rollout_ref.rollout.agent.num_workers = 1
     rollout_config.actor_rollout_ref.rollout.skip_tokenizer_init = True
     rollout_config.actor_rollout_ref.rollout.over_sample_rate = 0.0

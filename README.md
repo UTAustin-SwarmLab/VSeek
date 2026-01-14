@@ -493,26 +493,34 @@ FLASH_ATTN_FORCE_BUILD=TRUE MAX_JOBS=8 pip install flash-attn \
 
 #### torch 2.9.0 cuda 12.8
 
+
+
+conda create -n vseek-vllm python=3.11
+conda activate vseek-vllm
+conda install cuda -c nvidia/label/cuda-12.8.1
 module load gcc/14.2.0 cuda/12.8
 export CUDA_HOME="$TACC_CUDA_DIR"
 export CC=$(which gcc)
 export CXX=$(which g++)
 
-conda create -n vseek-vllm python=3.11
-conda activate vseek-vllm
-
 pip install torch==2.9.0 torchvision torchaudio 'numpy<2' --index-url https://download.pytorch.org/whl/cu128 --no-cache-dir
+
+export TORCH_CUDA_ARCH_LIST="9.0"
+export VLLM_FA_CMAKE_GPU_ARCHES="90-real"
+export CMAKE_CUDA_ARCHITECTURES="90-real"
 
 pip install vllm==0.12.0 'numpy<2' --no-build-isolation --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu128
 
 # Test Torch
-# python -c "import torch; print(torch.cuda.is_available())"
+python -c "import torch; print(torch.cuda.is_available())"
 
 # Install from PyPI (default index), but allow PyTorch index for dependencies if needed
 module load gcc/14.2.0 cuda/12.8
-export CUDA_HOME="$TACC_CUDA_DIR"
-export CC=$(which gcc)
-export CXX=$(which g++)
+
+export TORCH_CUDA_ARCH_LIST="9.0"
+export VLLM_FA_CMAKE_GPU_ARCHES="90-real"
+export CMAKE_CUDA_ARCHITECTURES="90-real"
+
 
 FLASH_ATTN_FORCE_BUILD=TRUE MAX_JOBS=8 pip install flash-attn \
     --no-build-isolation \
@@ -544,15 +552,17 @@ export CC=$(which gcc)
 export CXX=$(which g++)
 
 
-conda create -n vseek-vllm2 python=3.11
-conda activate vseek-vllm2
+conda create -n vseek-vllm python=3.11
+conda activate vseek-vllm
 
 conda install cuda -c nvidia/label/cuda-12.8.1
 pip install torch==2.7.1 'numpy<2' torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128   --no-cache-dir
 
 
-cd $WORK/vllm
 
+cd $WORK
+rm -rf vllm
+git clone https://github.com/vllm-project/vllm.git
 git checkout releases/v0.11.0
 
 # ============================================
@@ -577,7 +587,7 @@ echo "TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST"
 $CC --version | head -1
 
 # Clean build (run this if rebuilding or if SM targets are wrong)
-# rm -rf .deps/ build/ vllm/*.so vllm/**/*.so
+rm -rf .deps/ build/ vllm/*.so vllm/**/*.so
 
 python use_existing_torch.py
 pip install -r requirements/build.txt
@@ -586,7 +596,192 @@ cat > /tmp/constraints.txt << 'EOF'
 numpy<2
 EOF
 
-MAX_JOBS=8 pip install -e . --no-build-isolation --no-cache-dir --constraint /tmp/constraints.txt
+MAX_JOBS=16 pip install -e . --no-build-isolation --no-cache-dir --constraint /tmp/constraints.txt
+
+
+# ============================================
+# VERIFICATION CHECKS - Run after vLLM build
+# ============================================
+
+echo "=== 1. Environment Check ==="
+echo "CUDA_HOME: $CUDA_HOME"
+echo "TORCH_CUDA_ARCH_LIST: $TORCH_CUDA_ARCH_LIST"
+nvcc --version | grep "release"
+
+echo ""
+echo "=== 2. Python Package Versions ==="
+python -c "
+import torch
+import numpy as np
+print(f'PyTorch: {torch.__version__}')
+print(f'PyTorch CUDA: {torch.version.cuda}')
+print(torch.cuda.is_available())
+print(f'NumPy: {np.__version__}')
+assert 'cu128' in torch.__version__ or torch.version.cuda == '12.8', 'ERROR: PyTorch not built with CUDA 12.8!'
+assert int(np.__version__.split('.')[0]) < 2, 'ERROR: NumPy >= 2.0 detected!'
+print('✓ PyTorch CUDA 12.8 verified')
+print('✓ NumPy < 2 verified')
+"
+
+echo ""
+echo "=== 3. vLLM Flash Attention SM Targets ==="
+VLLM_PATH=$(python -c "import vllm; import os; print(os.path.dirname(vllm.__file__))")
+echo "vLLM path: $VLLM_PATH"
+
+check_sm() {
+    local so_file="$1"
+    if [ -f "$so_file" ]; then
+        local targets=$(strings "$so_file" 2>/dev/null | grep -oE "sm_[0-9]+" | sort -u | tr '\n' ' ')
+        if echo "$targets" | grep -q "sm_90"; then
+            echo "[PASS] $(basename $so_file): $targets"
+        else
+            echo "[FAIL] $(basename $so_file): $targets (MISSING sm_90)"
+            return 1
+        fi
+    fi
+}
+
+check_sm "$VLLM_PATH/_C.abi3.so"
+check_sm "$VLLM_PATH/vllm_flash_attn/_vllm_fa2_C.abi3.so"
+check_sm "$VLLM_PATH/vllm_flash_attn/_vllm_fa3_C.abi3.so"
+
+echo ""
+echo "=== 4. GLIBCXX Check ==="
+strings /lib64/libstdc++.so.6 2>/dev/null | grep GLIBCXX | tail -3
+# Required: GLIBCXX_3.4.32 or higher for flash_attn
+
+echo ""
+echo "=== 5. GPU Check (run on compute node) ==="
+if command -v nvidia-smi &> /dev/null; then
+    nvidia-smi --query-gpu=name,compute_cap,driver_version --format=csv
+else
+    echo "(nvidia-smi not available - run this on compute node)"
+fi
+
+echo ""
+echo "=== Build Verification Complete ==="
+
+cd $WORK
+rm -rf triton
+git clone https://github.com/triton-lang/triton.git  
+cd triton 
+git checkout release/3.3.x  
+TORCH_CUDA_ARCH_LIST="9.0" MAX_JOBS=32 pip install -e python --verbose
+
+## Build VSEEK and VERL
+
+
+cd $HOME/VSeek-R1
+
+# Install from PyPI (default index), but allow PyTorch index for dependencies if needed
+
+
+pip install -e .
+pip install -r requirements_vllm_slurm2.txt --no-deps
+pip install vendor/verl
+
+#####Sanity checks
+
+
+# Check what CUDA arch flash_attn was built for
+python -c "
+import flash_attn
+import os
+fa_path = os.path.dirname(flash_attn.__file__)
+print('flash_attn path:', fa_path)
+" && find $(python -c "import flash_attn; import os; print(os.path.dirname(flash_attn.__file__))") -name "*.so" -exec sh -c 'echo "=== {} ===" && strings {} | grep -E "sm_[0-9]+" | head -3' \;
+
+# Check vLLM's compiled extensions
+python -c "
+import vllm
+import os
+vllm_path = os.path.dirname(vllm.__file__)
+print('vLLM path:', vllm_path)
+" && find $(python -c "import vllm; import os; print(os.path.dirname(vllm.__file__))") -name "*.so" -exec sh -c 'echo "=== {} ===" && strings {} | grep -E "sm_[0-9]+" | head -3' \; 2>/dev/null | head -50
+
+# Check GPU compute capability on compute node
+nvidia-smi --query-gpu=compute_cap --format=csv
+
+# Check driver version
+nvidia-smi --query-gpu=driver_version --format=csv
+
+
+module load gcc/13.2.0 cuda/12.8
+export CUDA_HOME="$CONDA_PREFIX"
+export CC=$(which gcc)
+export CXX=$(which g++)
+
+FLASH_ATTN_FORCE_BUILD=TRUE MAX_JOBS=8 pip install flash-attn \
+    --no-build-isolation \
+    --no-cache-dir \
+    --extra-index-url https://download.pytorch.org/whl/cu128
+
+
+module load gcc/13.2.0 cuda/12.8
+export CUDA_HOME="$CONDA_PREFIX"
+export CC=$(which gcc)
+export CXX=$(which g++)
+
+conda install -c nvidia cuda-nvrtc cuda-cudart cuda-nvcc -y
+
+<!-- pip install -e .
+pip install -r requirements_vllm_slurm2.txt --no-deps
+pip install vendor/verl -->
+
+
+-------------------------------------------------------
+
+### cuda 12.8 torch 2.9.0 
+
+
+export TORCH_CUDA_ARCH_LIST="9.0" 
+module load gcc/14.2.0 cuda/12.8
+export CUDA_HOME="$TACC_CUDA_DIR"
+export CC=$(which gcc)
+export CXX=$(which g++)
+
+
+conda create -n vseek-vllm2 python=3.11
+conda activate vseek-vllm2
+
+pip install torch==2.9.0 'numpy<2' torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128   --no-cache-dir
+
+
+cd $WORK/vllm
+y
+git checkout releases/v0.12.0
+
+# ============================================
+# PRE-BUILD CHECKS
+# ============================================
+echo "=== Pre-build environment check ==="
+module load gcc/14.2.0 cuda/12.8
+export CUDA_HOME="$TACC_CUDA_DIR"
+export CC=$(which gcc)
+export CXX=$(which g++)
+export CMAKE_PREFIX_PATH=$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')
+
+
+export TORCH_CUDA_ARCH_LIST="9.0"
+export VLLM_FA_CMAKE_GPU_ARCHES="sm_90"
+
+# Verify environment before building
+echo "CUDA_HOME=$CUDA_HOME"
+echo "CC=$CC (should be gcc 13.2)"
+echo "TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST"
+$CC --version | head -1
+
+# Clean build (run this if rebuilding or if SM targets are wrong)
+rm -rf .deps/ build/ vllm/*.so vllm/**/*.so
+
+python use_existing_torch.py
+pip install -r requirements/build.txt
+pip install -r requirements/common.txt
+cat > /tmp/constraints.txt << 'EOF'
+numpy<2
+EOF
+
+MAX_JOBS=24 pip install -e . --no-build-isolation --no-cache-dir --constraint /tmp/constraints.txt
 
 # ============================================
 # VERIFICATION CHECKS - Run after vLLM build
@@ -694,9 +889,12 @@ FLASH_ATTN_FORCE_BUILD=TRUE MAX_JOBS=8 pip install flash-attn \
     --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cu128
 
+pip install -e .
+pip install -r requirements_vllm_slurm2.txt --no-deps
+pip install vendor/verl
 
 
-
+--------------------------------------------------------
 ### #### torch cuda 12.6 gcc/13.2.0 
 
 module load gcc/13.2.0 cuda/12.6
@@ -744,3 +942,225 @@ export SLURM_JOB_NUM_NODES=2
 
 
 huggingface-cli download "Qwen/Qwen3-VL-4B-Thinking" --cache-dir "/work/11123/harshgoel99/vista/huggingface/hub" || python3 -c "from transformers import AutoModel, AutoTokenizer; AutoModel.from_pretrained('Qwen/Qwen3-VL-4B-Thinking', trust_remote_code=True); AutoTokenizer.from_pretrained('Qwen/Qwen3-VL-4B-Thinking', trust_remote_code=True)"
+
+
+ export SLURM_JOB_NODELIST="c608-041,c608-042,c608-051,c608-052,c608-061,c608-062,c608-081,c608-082"
+
+ export SLURM_JOB_NUM_NODES=8
+
+export SLURM_JOB_NODELIST="c608-081,c608-082,c608-091,c608-092,c608-101,c608-102,c608-111,c608-112"
+
+export SLURM_JOB_NUM_NODES=8
+
+
+export SLURM_JOB_NODELIST="c608-042,c608-052,c608-061,c608-062,c608-102,c608-111,c608-112,c608-142"
+
+export SLURM_JOB_NUM_NODES=8
+
+
+
+export SLURM_JOB_NODELIST="c608-051,c608-052,c608-061,c608-062"
+export SLURM_JOB_NUM_NODES=4
+
+
+
+-------------------------------------------------------
+-------------------------------------------------------------
+## Torch 2.8 CUDA 12.9
+
+
+export TORCH_CUDA_ARCH_LIST="9.0" 
+module load gcc/15.1.0 cuda/12.9
+export CUDA_HOME="$TACC_CUDA_DIR"
+export CC=$(which gcc)
+export CXX=$(which g++)
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+
+conda create -n vseek-vllm2 python=3.11 git -y
+conda activate vseek-vllm2
+conda install -c nvidia cuda-toolkit=12.9 nccl -y
+
+pip install --force-reinstall torch==2.8.0 'numpy<2' torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129 
+
+export TORCH_CUDA_ARCH_LIST="9.0" 
+module load gcc/15.1.0 cuda/12.9
+export CUDA_HOME="$TACC_CUDA_DIR"
+export CC=$(which gcc)
+export CXX=$(which g++)
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+python -c "
+import torch
+import numpy as np
+print(f'PyTorch: {torch.__version__}')
+print(f'PyTorch CUDA: {torch.version.cuda}')
+print(torch.cuda.is_available())
+"
+
+cd $WORK
+rm -rf vllm
+git clone https://github.com/vllm-project/vllm.git
+cd vllm
+git checkout releases/v0.11.0
+
+
+echo "=== Pre-build environment check ==="
+module load gcc/15.1.0 cuda/12.9
+export CUDA_HOME="$TACC_CUDA_DIR"
+export CC=$(which gcc)
+export CXX=$(which g++)
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+export CMAKE_PREFIX_PATH=$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')
+
+
+
+export TORCH_CUDA_ARCH_LIST="9.0"
+export VLLM_FA_CMAKE_GPU_ARCHES="90-real"
+export CMAKE_CUDA_ARCHITECTURES="90-real"
+
+# Verify environment before building
+echo "CUDA_HOME=$CUDA_HOME"
+echo "CC=$CC (should be gcc 15.2)"
+echo "TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST"
+$CC --version | head -1
+
+# Clean build (run this if rebuilding or if SM targets are wrong)
+rm -rf .deps/ build/ vllm/*.so vllm/**/*.so
+
+python use_existing_torch.py
+pip install -r requirements/build.txt
+pip install -r requirements/common.txt
+cat > /tmp/constraints.txt << 'EOF'
+numpy<2
+EOF
+
+MAX_JOBS=16 pip install -e . --no-build-isolation --no-cache-dir --constraint /tmp/constraints.txt --verbose
+
+# ============================================
+# VERIFICATION CHECKS - Run after vLLM build
+# ============================================
+
+echo "=== 1. Environment Check ==="
+echo "CUDA_HOME: $CUDA_HOME"
+echo "TORCH_CUDA_ARCH_LIST: $TORCH_CUDA_ARCH_LIST"
+nvcc --version | grep "release"
+
+echo ""
+echo "=== 2. Python Package Versions ==="
+python -c "
+import torch
+import numpy as np
+print(f'PyTorch: {torch.__version__}')
+print(f'PyTorch CUDA: {torch.version.cuda}')
+print(torch.cuda.is_available())
+print(f'NumPy: {np.__version__}')
+assert 'cu129' in torch.__version__ or torch.version.cuda == '12.9', 'ERROR: PyTorch not built with CUDA 12.9!'
+assert int(np.__version__.split('.')[0]) < 2, 'ERROR: NumPy >= 2.0 detected!'
+print('✓ PyTorch CUDA 12.9 verified')
+print('✓ NumPy < 2 verified')
+"
+
+echo ""
+echo "=== 3. vLLM Flash Attention SM Targets ==="
+VLLM_PATH=$(python -c "import vllm; import os; print(os.path.dirname(vllm.__file__))")
+echo "vLLM path: $VLLM_PATH"
+
+check_sm() {
+    local so_file="$1"
+    if [ -f "$so_file" ]; then
+        local targets=$(strings "$so_file" 2>/dev/null | grep -oE "sm_[0-9]+" | sort -u | tr '\n' ' ')
+        if echo "$targets" | grep -q "sm_90"; then
+            echo "[PASS] $(basename $so_file): $targets"
+        else
+            echo "[FAIL] $(basename $so_file): $targets (MISSING sm_90)"
+            return 1
+        fi
+    fi
+}
+
+check_sm "$VLLM_PATH/_C.abi3.so"
+check_sm "$VLLM_PATH/vllm_flash_attn/_vllm_fa2_C.abi3.so"
+check_sm "$VLLM_PATH/vllm_flash_attn/_vllm_fa3_C.abi3.so"
+
+echo ""
+echo "=== 4. GLIBCXX Check ==="
+strings /lib64/libstdc++.so.6 2>/dev/null | grep GLIBCXX | tail -3
+# Required: GLIBCXX_3.4.32 or higher for flash_attn
+
+echo ""
+echo "=== 5. GPU Check (run on compute node) ==="
+if command -v nvidia-smi &> /dev/null; then
+    nvidia-smi --query-gpu=name,compute_cap,driver_version --format=csv
+else
+    echo "(nvidia-smi not available - run this on compute node)"
+fi
+
+echo ""
+echo "=== Build Verification Complete ==="
+
+
+#####Sanity checks
+
+
+# Check what CUDA arch flash_attn was built for
+python -c "
+import flash_attn
+import os
+fa_path = os.path.dirname(flash_attn.__file__)
+print('flash_attn path:', fa_path)
+" && find $(python -c "import flash_attn; import os; print(os.path.dirname(flash_attn.__file__))") -name "*.so" -exec sh -c 'echo "=== {} ===" && strings {} | grep -E "sm_[0-9]+" | head -3' \;
+
+# Check vLLM's compiled extensions
+python -c "
+import vllm
+import os
+vllm_path = os.path.dirname(vllm.__file__)
+print('vLLM path:', vllm_path)
+" && find $(python -c "import vllm; import os; print(os.path.dirname(vllm.__file__))") -name "*.so" -exec sh -c 'echo "=== {} ===" && strings {} | grep -E "sm_[0-9]+" | head -3' \; 2>/dev/null | head -50
+
+# Check GPU compute capability on compute node
+nvidia-smi --query-gpu=compute_cap --format=csv
+
+# Check driver version
+nvidia-smi --query-gpu=driver_version --format=csv
+
+module load gcc/15.1.0 cuda/12.9
+export CUDA_HOME="$CONDA_PREFIX"
+export CC=$(which gcc)
+export CXX=$(which g++)
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+export TORCH_CUDA_ARCH_LIST="9.0"
+export VLLM_FA_CMAKE_GPU_ARCHES="90-real"
+export CMAKE_CUDA_ARCHITECTURES="90-real"
+
+cd $WORK
+rm -rf triton
+git clone https://github.com/triton-lang/triton.git  
+cd triton 
+git checkout release/3.4.x  
+pip install -r python/requirements.txt
+TORCH_CUDA_ARCH_LIST="9.0" MAX_JOBS=32 pip install -e . --verbose
+
+## Build VSEEK and VERL
+
+
+<!-- module load gcc/14.2.0 
+export TORCH_CUDA_ARCH_LIST="9.0"
+export VLLM_FA_CMAKE_GPU_ARCHES="90-real"
+export CMAKE_CUDA_ARCHITECTURES="90-real"
+
+export CUDA_HOME="$CONDA_PREFIX"
+export CC=$(which gcc)
+export CXX=$(which g++)
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+FLASH_ATTN_FORCE_BUILD=TRUE MAX_JOBS=16 pip install flash-attn \
+    --no-build-isolation \
+    --no-cache-dir \
+    --extra-index-url https://download.pytorch.org/whl/cu129 \
+    --verbose -->
+
+module load gcc/15.1.0 cuda/12.9
+cd $HOME/VSeek-R1
+pip install -e .
+pip install -r requirements_vllm_slurm2.txt --no-deps
+pip install vendor/verl
+
