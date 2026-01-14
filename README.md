@@ -722,7 +722,6 @@ export CUDA_HOME="$CONDA_PREFIX"
 export CC=$(which gcc)
 export CXX=$(which g++)
 
-conda install -c nvidia cuda-nvrtc cuda-cudart cuda-nvcc -y
 
 <!-- pip install -e .
 pip install -r requirements_vllm_slurm2.txt --no-deps
