@@ -28,5 +28,5 @@ To run the slurm script
 
 bash scripts/tacc/run_vseek_job.slurm
 
-1) Dataset - 
-2) Index
+1) Dataset and Index - /work/11123/harshgoel99/vista/vseek
+2) Original Minimal Data folder - /work/11123/harshgoel99/vista/datasets/
