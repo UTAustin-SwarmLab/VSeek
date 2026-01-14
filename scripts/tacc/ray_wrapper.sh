@@ -10,14 +10,14 @@ export CC=$(which gcc)
 export CXX=$(which g++)
 export CUDA_HOME="$TACC_CUDA_DIR"
 export PATH="${CUDA_HOME}/bin:${PATH}"
-conda activate vseek-vllm
+conda activate vseek-vllm2
 
 # 2. Source Captured Environment (Critical for TACC SSH)
 if [ -f ~/worker_env.sh ]; then
     source ~/worker_env.sh
 fi
 
-conda activate vseek-vllm
+conda activate vseek-vllm2
 
 # 3. Export Common Variables (Fallback)
 export HF_HOME="${WORK}/huggingface"

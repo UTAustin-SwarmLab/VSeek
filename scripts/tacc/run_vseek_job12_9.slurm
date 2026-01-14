@@ -16,16 +16,28 @@ date
 
 # Activate conda environment on head node
 source ~/.bashrc
-# Fix: Ensure standard CUDA compiler is used, not NVHPC
-module load gcc/13.2.0 cuda/12.8
-export CC=$(which gcc)
-export CXX=$(which g++)
-export CUDA_HOME="$TACC_CUDA_DIR"
-export PATH="${CUDA_HOME}/bin:${PATH}"
+
+# Activate conda FIRST so $CONDA_PREFIX is correct
 conda activate vseek-vllm2
 echo "Conda environment: $CONDA_DEFAULT_ENV"
+ldd $CONDA_PREFIX/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so | grep nccl
 
-pip
+# Fix: Ensure standard CUDA compiler is used, not NVHPC
+module load gcc/15.1.0 cuda/12.9
+export CUDA_HOME="$TACC_CUDA_DIR"
+export CC=$(which gcc)
+export CXX=$(which g++)
+
+# Set LD_LIBRARY_PATH AFTER conda activation so $CONDA_PREFIX is correct
+# TEMPORARY FIX: Put system NCCL FIRST to use newer version from CUDA 12.9
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+
+# Verify PyTorch can import
+python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')" || {
+    echo "ERROR: PyTorch import failed. Checking NCCL..."
+    ldd $CONDA_PREFIX/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so | grep nccl
+    exit 1
+}
 
 # Set HuggingFace cache to $WORK directory (persists across jobs, more space)
 export HF_HOME="${WORK}/huggingface"
@@ -109,16 +121,20 @@ export RAY_ADDRESS=$ip_head
 # -------------------------------------------------------------------------
 
 # Ensure wrapper is executable
-chmod +x scripts/tacc/ray_wrapper.sh
+chmod +x scripts/tacc/ray_wrapper12_9.sh
 
-# Capture environment from Head Node (where we know CUDA works)
+# Capture environment from Head Node (DO NOT capture LD_LIBRARY_PATH - causes conflicts)
 echo "Capturing environment for workers..."
-env | grep -E "^(PATH|LD_LIBRARY_PATH|CUDA_|NCCL_|Ray_|CONDA_)" > worker_env.sh
+env | grep -E "^(CUDA_HOME|NCCL_|RAY_|HF_)" > worker_env.sh
+# Also explicitly export critical variables
+echo "export CONDA_PREFIX=$CONDA_PREFIX" >> worker_env.sh
+echo "export CONDA_DEFAULT_ENV=$CONDA_DEFAULT_ENV" >> worker_env.sh
+echo "Captured environment to worker_env.sh (excluding LD_LIBRARY_PATH)"
 
 # 1. Start Ray Head on the Head Node (Local execution)
 echo "Launching Ray Head on $HEAD_NODE (local)..."
 # We run wrapper locally to setup env, then start ray
-scripts/tacc/ray_wrapper.sh \
+scripts/tacc/ray_wrapper12_9.sh \
     ray start --head --node-ip-address="$head_node_ip" --port=$port --num-gpus=1 --num-cpus=8 --dashboard-host=0.0.0.0 --block &
 sleep 10
 
@@ -130,11 +146,11 @@ if [ $worker_num -gt 0 ]; then
         echo "  -> Starting Worker on $node_i"
         
         # Copy wrapper AND env file to worker
-        scp scripts/tacc/ray_wrapper.sh "$node_i":~/ray_wrapper.sh
+        scp scripts/tacc/ray_wrapper12_9.sh "$node_i":~/ray_wrapper12_9.sh
         scp worker_env.sh "$node_i":~/worker_env.sh
         
         # Execute wrapper via SSH
-        ssh "$node_i" "chmod +x ~/ray_wrapper.sh && ~/ray_wrapper.sh ray start --address '$ip_head' --num-gpus=1 --num-cpus=8 --block" &
+        ssh "$node_i" "chmod +x ~/ray_wrapper12_9.sh && ~/ray_wrapper12_9.sh ray start --address '$ip_head' --num-gpus=1 --num-cpus=8 --block" &
         sleep 5
     done
 fi
@@ -142,7 +158,7 @@ fi
 # Wait for workers to register
 echo "Waiting for cluster to initialize..."
 for i in {1..30}; do
-    if scripts/tacc/ray_wrapper.sh ray status > /dev/null 2>&1; then
+    if scripts/tacc/ray_wrapper12_9.sh ray status > /dev/null 2>&1; then
         echo "Ray cluster is UP!"
         break
     fi
@@ -151,14 +167,14 @@ for i in {1..30}; do
 done
 
 # Verify status again with output
-scripts/tacc/ray_wrapper.sh ray status || { echo "Ray failed to start"; exit 1; }
+scripts/tacc/ray_wrapper12_9.sh ray status || { echo "Ray failed to start"; exit 1; }
 sleep 5
 echo "Ray cluster status:"
 # Run status check inside wrapper to ensure environment is right
-scripts/tacc/ray_wrapper.sh ray status || echo "Ray status check failed (might be too early)"
+scripts/tacc/ray_wrapper12_9.sh ray status || echo "Ray status check failed (might be too early)"
 
 # Verify we have enough GPUs
-total_gpus=$(scripts/tacc/ray_wrapper.sh ray status | grep -oP '\d+\.\d+(?=/\d+\.\d+ GPU)' | tail -1 || echo "0")
+total_gpus=$(scripts/tacc/ray_wrapper12_9.sh ray status | grep -oP '\d+\.\d+(?=/\d+\.\d+ GPU)' | tail -1 || echo "0")
 echo "Total GPUs in cluster: $total_gpus"
 
 # -------------------------------------------------------------------------
@@ -307,7 +323,12 @@ export CUDA_LAUNCH_BLOCKING=1
 export VLLM_USE_V1=1
 export RAY_memory_usage_threshold=0.98  # Allow up to 98% memory before killing
 
-module load gcc/13.2.0 cuda/12.8
+module load gcc/15.1.0 cuda/12.9
+export CUDA_HOME="$TACC_CUDA_DIR"
+export CC=$(which gcc)
+export CXX=$(which g++)
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+
 python3 -m vseek.trainer.main_ppo \
     --config-path="$CONFIG_PATH" \
     --config-name='lvb_grpo' \
