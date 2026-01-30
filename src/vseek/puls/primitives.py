@@ -88,8 +88,11 @@ def main(cfg: DictConfig):
 
     def _process_entry(entry):
         llm = LLM(openai_api_key=openai_key)
-        print("Question: ", entry["question"])
+
         prompt = entry["question"].split("Question:")[-1].strip()
+        prompt = prompt + "\n Options: \n" + "\n".join([f"{opt}" for _, opt in enumerate(entry["candidates"])])
+        prompt = prompt + "\n Correct Answer: " + str(entry["correct_choice"])
+        print("Question: ", prompt)
         try:    
             output = PULS(llm, prompt)
         except Exception as e:

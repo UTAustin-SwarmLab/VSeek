@@ -111,6 +111,6 @@ if __name__ == "__main__":
             puls=puls_data,
             search_type="subtitle"
         )
-       d 
+       
         
         time.sleep(0.5) # Brief pause between requests
