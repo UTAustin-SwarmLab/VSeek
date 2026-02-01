@@ -172,6 +172,8 @@ class VideoSearchTool(BaseTool):
                         pop_id = self.cached_ids.pop(0)
                         del self.cached_frames_dict[pop_id]
             
+                       
+            
             if isinstance(puls, dict):
                 puls = json.dumps(puls)
             # Prepare request payload
@@ -217,18 +219,28 @@ class VideoSearchTool(BaseTool):
             metadata["total_frames"] = total_num_frames
             
             metadata.setdefault("search_mode", "subtitle" if search_type != "video_frames" else "language")
-            puls = data.get("puls", {})
-            metadata["puls"] = puls
+            puls_data = data.get("puls", {})
+            metadata["puls"] = puls_data
+            frame_indices_mapped = []
+            if precomputed_frames is not None:
+                for idx in frame_indices:
+                    frame_indices_mapped += [j for j in range(idx*self.window_size, (idx+1)*self.window_size)]
+
             # Uniformly sample the frames to the max_frames_per_turn from all frames
             if len(frames) > self.max_frames_per_turn:
                 idxs = np.linspace(0, len(frames) - 1, self.max_frames_per_turn, dtype=int)
                 frames = [frames[i] for i in idxs]
+                frame_indices_mapped = [frame_indices_mapped[i] for i in idxs]
+                
                 # frame_indices = idxs
-            return frames, frame_indices, metadata
+            
+            # Note that frame indices correspond to the window indices, I want to convert them to actual frame indices in the video
+
+            return frames, frame_indices_mapped, metadata
 
         except Exception as e:
             logger.exception("_search_video_frames failed: %s", e)
-            return [], [], {"status": "error", "error": str(e), "search_mode": search_type}
+            return [], [], {"status": "error", "error": str(e), "search_mode": search_type, "puls": {}}
 
     async def _search_subtitles(
         self, 
@@ -269,6 +281,10 @@ class VideoSearchTool(BaseTool):
         if not ret:
             raise ValueError("Could not encode frame")
         return base64.b64encode(buffer).decode("utf-8")
+    
+    async def _encode_frame_bytes_to_base64(self, frame):
+        # Resize frame to reduce aspect ratio and make it easier to parse
+        return base64.b64encode(frame).decode("utf-8")
     
     @rollout_trace_op
     async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> tuple[ToolResponse, float, dict]:
@@ -348,14 +364,30 @@ class VideoSearchTool(BaseTool):
                 )
             elif search_type=="summary":
                 frames = video_summary
-                frame_indices = list(range(len(video_summary)))
+                num_summary_frames = len(video_summary)
+                
+                # Determine total video length to compute proper frame indices
+                if precomputed_frames is not None:
+                    total_num_frames = 0
+                    for frame in precomputed_frames:
+                        total_num_frames += len(frame["encoded_frames"])         
+                elif video_id and video_id in self.cached_frames_dict:
+                    total_num_frames = len(self.cached_frames_dict[video_id].all_frames)
+
+                # Compute uniformly distributed frame indices across the video
+                if total_num_frames > 1 and num_summary_frames > 0:
+                    frame_indices = np.linspace(0, total_num_frames - 1, num_summary_frames, dtype=int).tolist()
+                else:
+                    frame_indices = list(range(num_summary_frames))
+                
                 puls = {
-                    key: 0.20 for key in puls.keys() 
+                    'summary': 0.2,
                 }
                 metadata = {
                     "status": "success",
                     "search_mode": "summary",
                     "puls": puls,
+                    "total_frames": total_num_frames,
                 }
             if metadata.get("error"):
                 return ToolResponse(text=json.dumps({"error": metadata.get("error")})), 0.0, {"error": metadata.get("error")}
@@ -381,11 +413,14 @@ class VideoSearchTool(BaseTool):
                 "num_results": len(frame_indices),
                 "status": metadata.get("status", "success"),
                 "error": metadata.get("error"),
+                "frame_indices": frame_indices,  # Include frame indices for ordered agent
+                "total_frames": metadata.get("total_frames", 0),
             }
-            # If precomputed frames were passed, they are already base64 strings; otherwise encode
+            # If precomputed frames were passed, they are in bytes, hence need to be encoded to base64; otherwise encode directly to base64
             if precomputed_frames is None:
                 frames = [await self._encode_frame(frame) for frame in frames]
-
+            else:
+                frames = [await self._encode_frame_bytes_to_base64(frame) for frame in frames]
 
             text = ""
             # TODO: Uncomment once full training is completed
