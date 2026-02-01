@@ -58,7 +58,7 @@ python3 -m vseek.trainer.main_ppo \
     trainer.critic_warmup=0 \
     trainer.logger='["console","wandb"]' \
     trainer.project_name='vseek' \
-    trainer.experiment_name='qwen3-4bt_vl_all-emreward-vllm-wtool-tagsummary' \
+    trainer.experiment_name='qwen3-4bt_vl_all-pulsreward-vllm-wtool-tagsummary' \
     trainer.n_gpus_per_node=5 \
     trainer.nnodes=1 \
     trainer.save_freq=40 \
@@ -70,5 +70,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.rollout.agent.default_agent_loop="vseek_tag_summary_agent" \
     trainer.total_epochs=50 \
     trainer.val_before_train=True \
-    trainer.log_val_generations=20
+    trainer.log_val_generations=20 \
+    custom_reward_function.reward_kwargs.puls_threshold=0.15 \
+    custom_reward_function.reward_kwargs.reward_type=puls \
 
