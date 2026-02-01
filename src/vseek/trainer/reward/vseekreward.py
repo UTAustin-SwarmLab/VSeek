@@ -116,6 +116,16 @@ def compute_score(
     answer = extract_solution(solution_str=solution_str)
     open_count, close_count = count_answer_tags(solution_str)
     do_print = random.randint(1, 256) == 1
+    
+    if 'num_examine' in extra_info:
+        num_examine = extra_info['num_examine']
+    else:
+        num_examine = 0
+    
+    # Set reward type to em based reward if num_examine is greater than 0 for validation dataset
+    if num_examine > 0:
+        reward_type = 'em'
+        
     if reward_type == 'puls':
         score_keys = ['puls', 'em']
     elif reward_type == 'em':
@@ -124,7 +134,7 @@ def compute_score(
         raise ValueError(f"Invalid reward type: {reward_type}")
 
     if do_print:
-        print("--------------------------------")
+        print(f"-------------Using {reward_type} reward-------------------")
         print(f"Golden answers: {ground_truth}")
         if answer is not None:
             print(f"Extracted answer is not None: {answer}")
@@ -154,25 +164,41 @@ def compute_score(
                     else:
                         total_score += format_score
             elif score_key == 'puls':
-                all_puls = extra_info.get('tool_extra_fields', {}).get('puls', {})
+                if 'tool_extra_fields' not in extra_info:
+                    raise ValueError("tool_extra_fields not found in extra_info")
+                all_puls = extra_info.get('tool_extra_fields', {}).get('tool_rewards', {})
                 puls_score = 0.0
                 consolidated_puls = {}
                 puls_threshold = kwargs.get('puls_threshold')
+                if do_print:
+                    print(f"All Puls: {all_puls}")
+                    print(f"Puls Threshold: {puls_threshold}")
+                
                 for puls in all_puls:   
+                    if isinstance(puls, float):
+                        continue
                     for key, value in puls.items():
                         consolidated_puls[key] = max(consolidated_puls[key], value) if key in consolidated_puls else value
                 
                 for key, value in consolidated_puls.items():
+                    if key == 'summary':
+                        puls_score += 0.5
+                        continue
                     if value > puls_threshold:
                         puls_score += 1.0
-                        
+
                 # If there are no puls specifications, we don't count this score
                 if len(consolidated_puls) > 0:
                     puls_score = puls_score / len(consolidated_puls)
                     total_score += puls_score*score[score_key]
                 else:
                     normalizer -= score[score_key]
-                
+                if do_print:
+                    print(f"Puls Score: {puls_score}")
+
+    if do_print:
+        print(f"Total Score: {total_score}")
+        print(f"Normalizer: {normalizer}")
     return total_score / normalizer
 
 
