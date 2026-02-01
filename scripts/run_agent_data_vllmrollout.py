@@ -268,7 +268,7 @@ def rollout_agent_data(
     rollout_config.actor_rollout_ref.rollout.multi_turn.tool_config_path = "./src/vseek/config/retriever/toolconfig.yaml"
     rollout_config.actor_rollout_ref.rollout.multi_turn.max_tool_response_length = 1024
     rollout_config.actor_rollout_ref.rollout.max_num_batched_tokens = 65536
-    rollout_config.actor_rollout_ref.rollout.temperature = 0.0
+    rollout_config.actor_rollout_ref.rollout.temperature = 0.2
     rollout_config.actor_rollout_ref.rollout.n = 1
 
     rollout_config.actor_rollout_ref.rollout.agent.num_workers = 1
