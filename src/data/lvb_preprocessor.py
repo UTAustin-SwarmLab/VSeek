@@ -115,7 +115,7 @@ if __name__ == "__main__":
         ret, buffer = cv2.imencode(".jpg", frame, encode_params)
         if not ret:
             raise ValueError("Could not encode frame")
-        return base64.b64encode(buffer).decode("utf-8")
+        return buffer.tobytes()
 
     data_root = None
     if args.embed_frames and args.index_path is not None:

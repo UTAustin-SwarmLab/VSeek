@@ -76,7 +76,7 @@ def _encode_frame(frame, max_side: int, quality: int) -> str:
     ret, buffer = cv2.imencode(".jpg", frame, encode_params)
     if not ret:
         raise ValueError("Could not encode frame")
-    return base64.b64encode(buffer).decode("utf-8")
+    return buffer.tobytes()
 
 
 if __name__ == "__main__":
