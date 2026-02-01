@@ -3,7 +3,7 @@
 #SBATCH -o vseek_job-%j.out
 #SBATCH -e vseek_job-%j.err
 #SBATCH -p gh
-#SBATCH -N 8
+#SBATCH -N 5
 #SBATCH --ntasks-per-node=1    # Important for Ray: 1 task (daemon) per node
 #SBATCH --cpus-per-task=16
 #SBATCH -t 48:00:00
@@ -22,7 +22,6 @@ export MASTER_PORT=${MASTER_PORT:-29651}
 export CUDA_LAUNCH_BLOCKING=1
 export VLLM_USE_V1=1
 export RAY_memory_usage_threshold=0.98
-
 export RAY_PORT=6379
 export RAY_DASHBOARD_PORT=8265
 export SERVER_PORT=9000
@@ -53,7 +52,7 @@ PROJECT_DIR="${PROJECT_ROOT}/src/vseek"
 CONFIG_PATH="${PROJECT_DIR}/config"
 MODEL_PATH="Qwen/Qwen3-VL-4B-Thinking"
 PROJECT_NAME="vseek"
-EXPERIMENT_NAME="qwen3-4bt_vl_lvbvmmelvbench-emreward-vllm-wtool-tagsummary-noklentr"
+EXPERIMENT_NAME="qwen3-4bt_vl_lvbvmmelvbench-emreward-vllm-wtool-tagsummary-noklentr-rloo"
 CHECKPOINT_DIR="/work/11123/harshgoel99/vista/checkpoints"
 
 WRAPPER_SCRIPT="${PROJECT_ROOT}/scripts/tacc/ray_wrapper.sh"
@@ -137,7 +136,7 @@ for ((i = 1; i <= NUM_WORKERS; i++)); do
     # Note: We explicitly source bashrc/conda again to ensure the non-interactive srun shell has the env.
     srun --nodes=1 --ntasks=1 -w $node_i \
         bash -c "source ~/.bashrc && conda activate vseek-vllm4 && \
-                ~/ray_wrapper.sh ray start --address $HEAD_IP:$RAY_PORT --num-gpus=1 --num-cpus=8 --block" &
+                "$WRAPPER_SCRIPT" ray start --address $HEAD_IP:$RAY_PORT --num-gpus=1 --num-cpus=8 --block" &
     sleep 5
 done
 
@@ -174,7 +173,7 @@ echo "TOOL_CONFIG_SRC: $TOOL_CONFIG_SRC"
 # Start the server in the background on the Head Node
 # We bind it to GPU 0 as requested
 echo "Starting server..."
-SERVER_PORT=8901
+SERVER_PORT=8900
 SERVER_URL="http://0.0.0.0:${SERVER_PORT}"
 # SERVER_URL="http://${HEAD_NODE}:${SERVER_PORT}"
 # Use wrapper to ensure env is correct, but run locally as we are on Head Node
@@ -247,6 +246,7 @@ fi
 
 # Training Variables
 
+
 export NCCL_SOCKET_IFNAME=^lo,docker  # Exclude loopback and docker, use everything else
 export NCCL_IB_DISABLE=0              # Enable InfiniBand/RDMA
 export NCCL_NET_GDR_LEVEL=5           # Enable GPU Direct RDMA
@@ -259,7 +259,7 @@ module load gcc/14.2.0 cuda/12.8
 python3 -m vseek.trainer.main_ppo \
     --config-path="$CONFIG_PATH" \
     --config-name='lvb_grpo' \
-    algorithm.adv_estimator=grpo \
+    algorithm.adv_estimator='rloo' \
     data.train_batch_size=128 \
     data.val_batch_size=128 \
     data.max_prompt_length=2536 \
@@ -271,7 +271,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps=50 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.freeze_vision_tower=True \
@@ -285,7 +285,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=64 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
     +ray_kwargs.ray_init.address="auto" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
@@ -298,9 +298,8 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.rollout.n=5 \
     actor_rollout_ref.rollout.multi_turn.format="hermes" \
     actor_rollout_ref.rollout.over_sample_rate=0.1 \
-    actor_rollout_ref.rollout.agent.num_workers=4 \
     actor_rollout_ref.rollout.mode=async \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=64 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \

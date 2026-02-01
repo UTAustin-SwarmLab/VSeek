@@ -22,6 +22,7 @@ actor_rollout_ref:
     exclude_modules: .*visual.*
   rollout:
     name: vseek_sglang
+    n: 5  # Number of rollouts per sample
     multi_turn:
       enable: True
       max_assistant_turns: 3
@@ -39,6 +40,8 @@ actor_rollout_ref:
       vllm: {}
       sglang: {}
   actor:
+    strategy: fsdp2
+    rollout_n: ${actor_rollout_ref.rollout.n}  # REQUIRED: Must match rollout.n
     use_dynamic_bsz: False
     ppo_micro_batch_size_per_gpu: 4  # Required when use_dynamic_bsz is False
     ppo_max_token_len_per_gpu: 32768
@@ -46,6 +49,8 @@ actor_rollout_ref:
     clip_ratio: 0.30
     entropy_coeff: 0.000
     use_kl_loss: False
+reward_model:
+  reward_manager: naive  # Required by base ppo_trainer config
 custom_reward_function:
   path: src/vseek/trainer/reward/vseekreward.py
   name: compute_score

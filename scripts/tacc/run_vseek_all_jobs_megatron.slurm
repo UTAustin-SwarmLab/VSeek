@@ -3,7 +3,7 @@
 #SBATCH -o vseek_job-%j.out
 #SBATCH -e vseek_job-%j.err
 #SBATCH -p gh
-#SBATCH -N 8
+#SBATCH -N 5
 #SBATCH --ntasks-per-node=1    # Important for Ray: 1 task (daemon) per node
 #SBATCH --cpus-per-task=16
 #SBATCH -t 48:00:00
@@ -137,7 +137,7 @@ for ((i = 1; i <= NUM_WORKERS; i++)); do
     # Note: We explicitly source bashrc/conda again to ensure the non-interactive srun shell has the env.
     srun --nodes=1 --ntasks=1 -w $node_i \
         bash -c "source ~/.bashrc && conda activate vseek-vllm4 && \
-                ~/ray_wrapper.sh ray start --address $HEAD_IP:$RAY_PORT --num-gpus=1 --num-cpus=8 --block" &
+                "$WRAPPER_SCRIPT" ray start --address $HEAD_IP:$RAY_PORT --num-gpus=1 --num-cpus=8 --block" &
     sleep 5
 done
 
@@ -271,7 +271,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps=50 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.freeze_vision_tower=True \
@@ -285,7 +285,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=64 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
     +ray_kwargs.ray_init.address="auto" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
@@ -298,9 +298,8 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.rollout.n=5 \
     actor_rollout_ref.rollout.multi_turn.format="hermes" \
     actor_rollout_ref.rollout.over_sample_rate=0.1 \
-    actor_rollout_ref.rollout.agent.num_workers=4 \
     actor_rollout_ref.rollout.mode=async \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=64 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \

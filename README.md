@@ -1163,3 +1163,132 @@ pip install -e .
 pip install -r requirements_vllm_slurm2.txt --no-deps
 pip install vendor/verl
 
+
+
+####################################################
+
+module load gcc/14.2.0 cuda/12.8
+conda create --name vseek-vllm3 python=3.12
+conda activate vseek-vllm3
+module load gcc/14.2.0 cuda/12.8
+pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu128 --no-cache-dir
+
+
+cd $WORK
+rm -rf vllm
+git clone https://github.com/vllm-project/vllm.git
+cd vllm
+git checkout releases/v0.12.0
+
+# ============================================
+# PRE-BUILD CHECKS
+# ============================================
+echo "=== Pre-build environment check ==="
+module load gcc/14.2.0 cuda/12.8
+export CUDA_HOME="$TACC_CUDA_DIR"
+export CC=$(which gcc)
+export CXX=$(which g++)
+export CMAKE_PREFIX_PATH=$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')
+
+
+export TORCH_CUDA_ARCH_LIST="9.0"
+export VLLM_FA_CMAKE_GPU_ARCHES="sm_90"
+
+# Verify environment before building
+echo "CUDA_HOME=$CUDA_HOME"
+echo "CC=$CC (should be gcc 13.2)"
+echo "TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST"
+$CC --version | head -1
+
+# Clean build (run this if rebuilding or if SM targets are wrong)
+rm -rf .deps/ build/ vllm/*.so vllm/**/*.so
+
+python use_existing_torch.py
+pip install -r requirements/build.txt
+pip install -r requirements/common.txt
+sed -i 's/^flashinfer-python.*/flashinfer-python/' requirements/cuda.txt
+grep flashinfer-python requirements/cuda.txt  # Verify
+cat > /tmp/constraints.txt << 'EOF'
+numpy<2
+EOF
+
+MAX_JOBS=24 pip install -e . --no-build-isolation --no-cache-dir --constraint /tmp/constraints.txt --verbose
+
+
+pip install "transformers[hf_xet]>=4.51.0" accelerate datasets peft hf-transfer \
+    "numpy<2.0.0" "pyarrow>=15.0.0" pandas "tensordict>=0.8.0,<=0.10.0,!=0.9.0" torchdata \
+    "ray[default]" codetiming hydra-core pylatexenc qwen-vl-utils wandb dill pybind11 liger-kernel mathruler \
+    pytest py-spy pre-commit ruff tensorboard --no-cache-dir
+pip install "nvidia-ml-py>=12.560.30" "fastapi[standard]>=0.115.0" "optree>=0.13.0" "pydantic>=2.9" "grpcio>=1.62.1" --no-cache-dir
+FLASH_ATTN_FORCE_BUILD=TRUE MAX_JOBS=8 pip install flash-attn==2.8.3 --no-build-isolation --no-cache-dir
+pip install flashinfer-python==0.3.1 --no-cache-dir 
+pip install opencv-python
+pip install opencv-fixer && \
+    python -c "from opencv_fixer import AutoFix; AutoFix()"
+pip install --no-deps -e .
+
+
+#######################################################
+
+
+module load gcc/14.2.0 cuda/12.8
+conda create --name vseek-vllm4 python=3.12 -y
+conda activate vseek-vllm4
+module load gcc/14.2.0 cuda/12.8
+pip install torch==2.10.0 torchvision torchaudio flashinfer-python --index-url https://download.pytorch.org/whl/cu128 --no-cache-dir
+
+
+cd $WORK
+rm -rf vllm
+git clone https://github.com/vllm-project/vllm.git
+cd vllm
+git checkout releases/v0.12.0
+
+# ============================================
+# PRE-BUILD CHECKS
+# ============================================
+echo "=== Pre-build environment check ==="
+module load gcc/14.2.0 cuda/12.8
+export CUDA_HOME="$TACC_CUDA_DIR"
+export CC=$(which gcc)
+export CXX=$(which g++)
+export CMAKE_PREFIX_PATH=$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')
+
+
+export TORCH_CUDA_ARCH_LIST="9.0"
+export VLLM_FA_CMAKE_GPU_ARCHES="sm_90"
+
+# Verify environment before building
+echo "CUDA_HOME=$CUDA_HOME"
+echo "CC=$CC (should be gcc 13.2)"
+echo "TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST"
+$CC --version | head -1
+
+# Clean build (run this if rebuilding or if SM targets are wrong)
+rm -rf .deps/ build/ vllm/*.so vllm/**/*.so
+
+python use_existing_torch.py
+pip install -r requirements/build.txt
+pip install -r requirements/common.txt
+cat > /tmp/constraints.txt << 'EOF'
+numpy<2
+EOF
+
+MAX_JOBS=24 pip install -e . --no-build-isolation --no-cache-dir --constraint /tmp/constraints.txt --verbose
+pip install torch==2.10.0 torchvision torchaudio flashinfer-python --index-url https://download.pytorch.org/whl/cu128 --no-cache-dir
+
+pip install "transformers[hf_xet]>=4.51.0" accelerate datasets peft hf-transfer \
+    "numpy<2.0.0" "pyarrow>=15.0.0" pandas "tensordict>=0.8.0,<=0.10.0,!=0.9.0" torchdata \
+    "ray[default]" codetiming hydra-core pylatexenc qwen-vl-utils wandb dill pybind11 liger-kernel mathruler \
+    pytest py-spy pre-commit ruff tensorboard --no-cache-dir
+pip install "nvidia-ml-py>=12.560.30" "fastapi[standard]>=0.115.0" "optree>=0.13.0" "pydantic>=2.9" "grpcio>=1.62.1" --no-cache-dir
+FLASH_ATTN_FORCE_BUILD=TRUE MAX_JOBS=8 pip install flash-attn==2.8.3 --no-build-isolation --no-cache-dir --verbose
+pip install flashinfer-python==0.5.3 --no-cache-dir 
+pip install opencv-python
+pip install opencv-fixer && \
+    python -c "from opencv_fixer import AutoFix; AutoFix()"
+
+cd $HOME/VSeek-R1
+pip install -r requirements_vllm_slurm2.txt --no-deps
+pip install vendor/verl
+pip install -e .

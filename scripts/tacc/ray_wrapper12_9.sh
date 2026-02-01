@@ -33,6 +33,10 @@ export TRANSFORMERS_CACHE="${HF_HOME}/hub"
 # 4. Disable torch.compile for vLLM compatibility (V1 engine required by verl)
 export VLLM_USE_V1=1
 
+# Fix harmony encoding download issues
+export HARMONY_CACHE_DIR="${HF_HOME}/harmony_cache"
+export VLLM_DISABLE_HARMONY=1
+
 # 5. CRITICAL: Verify PyTorch imports correctly before starting Ray
 echo "[Wrapper $(hostname)] Testing PyTorch import..."
 python3 -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA Available: {torch.cuda.is_available()}')" || {

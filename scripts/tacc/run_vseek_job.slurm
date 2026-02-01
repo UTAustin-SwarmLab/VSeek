@@ -17,15 +17,14 @@ date
 # Activate conda environment on head node
 source ~/.bashrc
 # Fix: Ensure standard CUDA compiler is used, not NVHPC
-module load gcc/13.2.0 cuda/12.8
+module load gcc/14.2.0 cuda/12.8
 export CC=$(which gcc)
 export CXX=$(which g++)
 export CUDA_HOME="$TACC_CUDA_DIR"
 export PATH="${CUDA_HOME}/bin:${PATH}"
-conda activate vseek-vllm2
+conda activate vseek-vllm4
 echo "Conda environment: $CONDA_DEFAULT_ENV"
 
-pip
 
 # Set HuggingFace cache to $WORK directory (persists across jobs, more space)
 export HF_HOME="${WORK}/huggingface"
@@ -97,7 +96,7 @@ worker_num=$((SLURM_JOB_NUM_NODES - 1))
 if [ $worker_num -gt 0 ]; then
     for ((i = 1; i <= worker_num; i++)); do
         node_i=${nodes_array[$i]}
-        ssh "$node_i" "source ~/.bashrc && conda activate vseek-vllm2 && ray stop --force; rm -rf /tmp/ray/session_*" || true
+        ssh "$node_i" "source ~/.bashrc && conda activate vseek-vllm4 && ray stop --force; rm -rf /tmp/ray/session_*" || true
     done
 fi
 
@@ -166,7 +165,7 @@ echo "Total GPUs in cluster: $total_gpus"
 # Start the server in the background on the Head Node
 # We bind it to GPU 0 as requested
 echo "Starting server..."
-# Use wrapper to ensure env is correct, but run locally as we are on Head Node
+# # Use wrapper to ensure env is correct, but run locally as we are on Head Node
 # scripts/tacc/ray_wrapper.sh python3 -u src/vseek/tools/server.py \
 #     retriever.window_size=8 \
 #     "dataset.name=['lvb','lvbench','videomme','mlvu']" \
@@ -233,7 +232,7 @@ sleep 120  # Give the server time to load models and indices
 echo "Testing server..."
 python3 -c "
 import requests                                                                                                            
-url = '${head_node_ip}:${SERVER_PORT}/search'
+url = 'http://${head_node_ip}:${SERVER_PORT}/search'
 payload = {
     'query': 'test',
     'dataset_name': 'videomme',  
@@ -250,7 +249,7 @@ except Exception as e:
 
 python3 -c " 
 import requests                                                                                                           
-url = '${head_node_ip}:${SERVER_PORT}/search_subtitle'
+url = 'http://${head_node_ip}:${SERVER_PORT}/search_subtitle'
 payload = {
     'query': 'test',
     'dataset_name': 'videomme',  
@@ -307,13 +306,19 @@ export CUDA_LAUNCH_BLOCKING=1
 export VLLM_USE_V1=1
 export RAY_memory_usage_threshold=0.98  # Allow up to 98% memory before killing
 
-module load gcc/13.2.0 cuda/12.8
+# NCCL network configuration - exclude loopback, let NCCL find best interface
+export NCCL_SOCKET_IFNAME=^lo,docker  # Exclude loopback and docker, use everything else
+export NCCL_IB_DISABLE=0              # Enable InfiniBand/RDMA
+export NCCL_NET_GDR_LEVEL=5           # Enable GPU Direct RDMA
+export NCCL_DEBUG=WARN                # Show warnings to help diagnose issues  
+
+module load gcc/14.2.0 cuda/12.8
 python3 -m vseek.trainer.main_ppo \
     --config-path="$CONFIG_PATH" \
     --config-name='lvb_grpo' \
     algorithm.adv_estimator=grpo \
-    data.train_batch_size=64 \
-    data.val_batch_size=64 \
+    data.train_batch_size=128 \
+    data.val_batch_size=128 \
     data.max_prompt_length=2536 \
     data.max_response_length=5656 \
     data.filter_overlong_prompts=True \
@@ -323,8 +328,8 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps=50 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=128 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.freeze_vision_tower=True \
     actor_rollout_ref.actor.clip_ratio_high=0.28 \
@@ -332,30 +337,31 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.actor.entropy_coeff=0.001 \
-    actor_rollout_ref.actor.use_dynamic_bsz=False\
+    actor_rollout_ref.actor.use_dynamic_bsz=False \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768 \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
-    actor_rollout_ref.actor.fsdp_config.param_offload=True \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.actor.fsdp_config.param_offload=False \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
     +ray_kwargs.ray_init.address="auto" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
+    actor_rollout_ref.rollout.max_num_batched_tokens=98304 \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=4 \
     actor_rollout_ref.rollout.max_model_len=8192 \
     actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
     actor_rollout_ref.rollout.free_cache_engine=True  \
-    actor_rollout_ref.rollout.agent.num_workers=1 \
-    actor_rollout_ref.rollout.enforce_eager=False \
-    actor_rollout_ref.rollout.n=8 \
+    actor_rollout_ref.rollout.enforce_eager=True \
+    actor_rollout_ref.rollout.n=4 \
     actor_rollout_ref.rollout.multi_turn.format="hermes" \
     actor_rollout_ref.rollout.over_sample_rate=0.1 \
     actor_rollout_ref.rollout.mode=async \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=64 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=False \
-    actor_rollout_ref.ref.fsdp_config.param_offload=True \
+    actor_rollout_ref.ref.fsdp_config.param_offload=False \
+    actor_rollout_ref.model.use_fused_kernels=True \
+    actor_rollout_ref.model.fused_kernel_options.impl_backend=torch \
     algorithm.use_kl_in_reward=False \
     trainer.critic_warmup=0 \
     trainer.logger='["console","wandb"]' \
