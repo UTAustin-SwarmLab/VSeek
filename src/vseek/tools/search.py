@@ -151,7 +151,9 @@ class VideoSearchTool(BaseTool):
         video_id: Optional[str] = None,
         search_type: str = "video_frames",
         precomputed_frames: Optional[List[Dict[str, List[str]]]] = None,
-        dataset_name: Optional[str] = None) -> Tuple[List[Any], List[int], Dict[str, Any]]:
+        dataset_name: Optional[str] = None,
+        puls: Optional[Dict[str, Any]] = None
+        ) -> Tuple[List[Any], List[int], Dict[str, Any]]:
         """Search for relevant video frames using background server.
 
         Args:
@@ -169,13 +171,19 @@ class VideoSearchTool(BaseTool):
                     if len(self.cached_ids) > self.cache_limit:
                         pop_id = self.cached_ids.pop(0)
                         del self.cached_frames_dict[pop_id]
+            
+                       
+            
+            if isinstance(puls, dict):
+                puls = json.dumps(puls)
             # Prepare request payload
             payload = {
                     "query": query,
                     "topk": topk,
                     "search_type": search_type,
                     "video_id": video_id,
-                    "dataset_name": dataset_name
+                    "dataset_name": dataset_name,
+                    "puls": puls
             }
             #print(f"payload: {payload}")
             # Make async HTTP request to background server
@@ -198,26 +206,41 @@ class VideoSearchTool(BaseTool):
             if precomputed_frames is not None:
                 for frame in precomputed_frames:
                     remapped_precomputed_frames[frame["window_idx"]] = frame["encoded_frames"]
+                total_num_frames = len(remapped_precomputed_frames)
                 for i in frame_indices:
                     frames += remapped_precomputed_frames.get(i, [])
             else:
                 for i in frame_indices:
                     frames += self.cached_frames_dict[vid].get_frame_chunk(i)
+                total_num_frames = len(self.cached_frames_dict[vid].all_frames)
                 
             # frames = [self.cached_frames_dict[vid].get_frame_chunk(i) for i in frame_indices] if vid in self.cached_frames_dict else []
             metadata = data.get("metadata", {})
-            metadata.setdefault("search_mode", "subtitle" if search_type != "video_frames" else "language")
+            metadata["total_frames"] = total_num_frames
             
+            metadata.setdefault("search_mode", "subtitle" if search_type != "video_frames" else "language")
+            puls_data = data.get("puls", {})
+            metadata["puls"] = puls_data
+            frame_indices_mapped = []
+            if precomputed_frames is not None:
+                for idx in frame_indices:
+                    frame_indices_mapped += [j for j in range(idx*self.window_size, (idx+1)*self.window_size)]
+
             # Uniformly sample the frames to the max_frames_per_turn from all frames
             if len(frames) > self.max_frames_per_turn:
                 idxs = np.linspace(0, len(frames) - 1, self.max_frames_per_turn, dtype=int)
                 frames = [frames[i] for i in idxs]
+                frame_indices_mapped = [frame_indices_mapped[i] for i in idxs]
+                
                 # frame_indices = idxs
-            return frames, frame_indices, metadata
+            
+            # Note that frame indices correspond to the window indices, I want to convert them to actual frame indices in the video
+
+            return frames, frame_indices_mapped, metadata
 
         except Exception as e:
             logger.exception("_search_video_frames failed: %s", e)
-            return [], [], {"status": "error", "error": str(e), "search_mode": search_type}
+            return [], [], {"status": "error", "error": str(e), "search_mode": search_type, "puls": {}}
 
     async def _search_subtitles(
         self, 
@@ -226,9 +249,19 @@ class VideoSearchTool(BaseTool):
         video_id: Optional[str] = None,
         search_type: str = "subtitles",
         precomputed_frames: Optional[Dict[str, List[str]]] = None,
-        dataset_name: Optional[str] = None) -> Tuple[List[Any], List[int], Dict[str, Any]]:
+        dataset_name: Optional[str] = None,
+        puls: Optional[Dict[str, Any]] = None
+        ) -> Tuple[List[Any], List[int], Dict[str, Any]]:
         """Search for frame indices by subtitle text."""
-        return await self._search_video_frames(subtitle, topk=topk, video_id=video_id, search_type=search_type, precomputed_frames=precomputed_frames, dataset_name=dataset_name)
+        return await self._search_video_frames(
+            subtitle, 
+            topk=topk,
+            video_id=video_id,
+            search_type=search_type,
+            precomputed_frames=precomputed_frames, 
+            dataset_name=dataset_name, 
+            puls=puls
+        )
         
     async def _encode_frame(self, frame, max_width=256, max_height=256, quality=85):
         # Resize frame to reduce aspect ratio and make it easier to parse
@@ -248,6 +281,10 @@ class VideoSearchTool(BaseTool):
         if not ret:
             raise ValueError("Could not encode frame")
         return base64.b64encode(buffer).decode("utf-8")
+    
+    async def _encode_frame_bytes_to_base64(self, frame):
+        # Resize frame to reduce aspect ratio and make it easier to parse
+        return base64.b64encode(frame).decode("utf-8")
     
     @rollout_trace_op
     async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> tuple[ToolResponse, float, dict]:
@@ -294,6 +331,8 @@ class VideoSearchTool(BaseTool):
         precomputed_frames = kwargs.get("precomputed_frames")
         video_summary = kwargs.get("video_summary")
         dataset_name = kwargs.get("dataset")
+        puls = kwargs.get("puls")
+        
         # if precomputed_frames is not None:
             #print(f"Will be using precomputed frames: {len(precomputed_frames)}")
             #print("Total frames: ", sum(len(frame["encoded_frames"]) for frame in precomputed_frames))
@@ -310,7 +349,8 @@ class VideoSearchTool(BaseTool):
                     video_id=video_id,
                     search_type=search_type,
                     precomputed_frames=precomputed_frames,
-                    dataset_name=dataset_name
+                    dataset_name=dataset_name,
+                    puls=puls
                 )
             elif search_type == "subtitles":
                 frames, frame_indices, metadata = await self._search_subtitles(
@@ -319,14 +359,35 @@ class VideoSearchTool(BaseTool):
                     video_id=video_id, 
                     search_type=search_type,    
                     precomputed_frames=precomputed_frames,
-                    dataset_name=dataset_name
+                    dataset_name=dataset_name,
+                    puls=puls
                 )
             elif search_type=="summary":
                 frames = video_summary
-                frame_indices = list(range(len(video_summary)))
+                num_summary_frames = len(video_summary)
+                
+                # Determine total video length to compute proper frame indices
+                if precomputed_frames is not None:
+                    total_num_frames = 0
+                    for frame in precomputed_frames:
+                        total_num_frames += len(frame["encoded_frames"])         
+                elif video_id and video_id in self.cached_frames_dict:
+                    total_num_frames = len(self.cached_frames_dict[video_id].all_frames)
+
+                # Compute uniformly distributed frame indices across the video
+                if total_num_frames > 1 and num_summary_frames > 0:
+                    frame_indices = np.linspace(0, total_num_frames - 1, num_summary_frames, dtype=int).tolist()
+                else:
+                    frame_indices = list(range(num_summary_frames))
+                
+                puls = {
+                    'summary': 0.2,
+                }
                 metadata = {
                     "status": "success",
                     "search_mode": "summary",
+                    "puls": puls,
+                    "total_frames": total_num_frames,
                 }
             if metadata.get("error"):
                 return ToolResponse(text=json.dumps({"error": metadata.get("error")})), 0.0, {"error": metadata.get("error")}
@@ -352,17 +413,24 @@ class VideoSearchTool(BaseTool):
                 "num_results": len(frame_indices),
                 "status": metadata.get("status", "success"),
                 "error": metadata.get("error"),
+                "frame_indices": frame_indices,  # Include frame indices for ordered agent
+                "total_frames": metadata.get("total_frames", 0),
             }
-            # If precomputed frames were passed, they are already base64 strings; otherwise encode
+            # If precomputed frames were passed, they are in bytes, hence need to be encoded to base64; otherwise encode directly to base64
             if precomputed_frames is None:
                 frames = [await self._encode_frame(frame) for frame in frames]
+            else:
+                frames = [await self._encode_frame_bytes_to_base64(frame) for frame in frames]
 
-            return ToolResponse(image=frames), 0.0, metrics
+            text = ""
+            # TODO: Uncomment once full training is completed
+            #text = f"Found {len(frame_indices)} relevant frames indexed by {frame_indices} from {metadata['total_frames']} total frames."
+            return ToolResponse(image=frames, text=text), metadata["puls"], metrics
 
         except Exception as e:
             error_result = json.dumps({"error": f"Video search execution failed: {e}"})
             logger.error(f"[VideoSearchTool] Execution failed: {e}")
-            return ToolResponse(text=error_result), 0.0, {"error": str(e)}
+            return ToolResponse(text=error_result), {}, {"error": str(e)}
 
     async def calc_reward(self, instance_id: str, **kwargs) -> str:
         """Calculate reward based on search results quality."""

@@ -13,6 +13,7 @@ from verl.experimental.agent_loop.tool_parser import FunctionCall, ToolParser
 from verl.tools.schemas import ToolResponse
 from verl.utils.profiler import simple_timer
 
+from vseek.trainer.reward.vseekrewardmanager import VSeekRewardManager
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
@@ -39,7 +40,7 @@ class VSeekToolAgentLoop(ToolAgentLoop):
                 ToolResponse(
                     text=f"Error when executing tool: {e}",
                 ),
-                0.0,
+                {},
                 {},
             )
         finally:
@@ -80,7 +81,15 @@ class VSeekToolAgentLoop(ToolAgentLoop):
         with simple_timer("tool_calls", agent_data.metrics):
             responses = await asyncio.gather(*tasks)
 
-        for tool_response, tool_reward, _ in responses:
+        for tool_response, tool_reward, tool_metrics in responses:
+            # Extract frame indices from tool metrics for temporal context
+            # frame_indices = tool_metrics.get("frame_indices", []) if isinstance(tool_metrics, dict) else []
+            # total_frames = tool_metrics.get("total_frames", 0)
+            # Build frame annotation text if we have frame indices
+            frame_annotation = ""
+            # if frame_indices:
+            #     frame_annotation = f"[Video frames {sorted_indices} of {total_frames} retrieved] "
+            
             if tool_response.image or tool_response.video:
                 if not getattr(self.processor, "image_processor", None):
                     raise ValueError(
@@ -95,11 +104,13 @@ class VSeekToolAgentLoop(ToolAgentLoop):
                 if tool_response.video:
                     for _ in tool_response.video:
                         content.append({"type": "video"})
-                if tool_response.text:
-                    content.append({"type": "text", "text": tool_response.text})
+                # Add frame annotation + original text
+                response_text = frame_annotation + (tool_response.text or "")
+                if response_text:
+                    content.append({"type": "text", "text": response_text})
                 message = {"role": "tool", "content": content}
             else:
-                message = {"role": "tool", "content": tool_response.text or ""}
+                message = {"role": "tool", "content": frame_annotation + (tool_response.text or "")}
 
             add_messages.append(message)
 
@@ -210,8 +221,6 @@ class _VSeekTagToolParser(ToolParser):
         return cleaned_text, function_calls
 
 
-
-
 class _VSeekJSONToolParser(ToolParser):
     def __init__(self, tokenizer) -> None:
         super().__init__(tokenizer)
@@ -276,6 +285,8 @@ class _VSeekJSONToolParser(ToolParser):
 
         return cleaned_text, function_calls
 
+
+    
 @register("vseek_tag_agent")
 class VSeekTagAgentLoop(VSeekToolAgentLoop):
     @classmethod
@@ -310,3 +321,139 @@ class VSeekJSONAgentLoop(VSeekToolAgentLoop):
         cls.tool_parser = _VSeekJSONToolParser(tokenizer)
 
 
+
+
+@register("vseek_fanout_agent")
+class VSeekFanoutAgentLoop(VSeekTagAgentLoop):
+    """
+    An agent loop that enforces a fan-out retrieval strategy:
+    - Executes multiple search tools in parallel.
+    - Aggregates all retrieved frames.
+    - Sorts frames chronologically (by frame index) before presenting them to the model.
+    """
+
+    async def _handle_processing_tools_state(self, agent_data: AgentData) -> AgentState:
+        """Handle the processing tools state with temporal frame sorting."""
+        add_messages: list[dict[str, Any]] = []
+        
+        # 1. Execute all tool calls in parallel
+        tasks = []
+        # Ensure we process all generated tool calls (up to limit)
+        for tool_call in agent_data.tool_calls[: self.max_parallel_calls]:
+            tasks.append(self._call_tool(tool_call, agent_data.tools_kwargs))
+
+        with simple_timer("tool_calls", agent_data.metrics):
+            responses = await asyncio.gather(*tasks)
+
+        # 2. Collect all images and metadata for sorting
+        # Structure: (frame_index, image_object)
+        all_collected_frames: list[tuple[int, Any]] = []
+        
+        # We also need to construct the text response history. 
+        # We will keep the text responses in the order the tools were called to maintain conversation logic,
+        # but the visual context (images) will be sorted globally.
+        
+        for i, (tool_response, tool_reward, tool_metrics) in enumerate(responses):
+            # Extract frame indices (assuming tool_metrics provides them)
+            # Default to -1 or a sequence if missing to avoid crashes, though vseek tools should provide them.
+            frame_indices = tool_metrics.get("frame_indices", []) if isinstance(tool_metrics, dict) else []
+            
+            # Text message construction for this specific tool
+            # (Standard logic from base class)
+            total_frames = tool_metrics.get("total_frames", 0) if isinstance(tool_metrics, dict) else 0
+            sorted_indices_text = str(sorted(frame_indices)) if frame_indices else "[]"
+            frame_annotation = ""
+            if frame_indices:
+                frame_annotation = f"[Video frames {sorted_indices_text} of {total_frames} retrieved] "
+
+            # Handle Images
+            if tool_response.image:
+                images_list = tool_response.image if isinstance(tool_response.image, list) else [tool_response.image]
+                
+                # Pair images with their indices
+                # If indices are missing/mismatched, we preserve relative order using a large offset + i
+                for j, img in enumerate(images_list):
+                    if img is not None:
+                        idx = frame_indices[j] if j < len(frame_indices) else (999999 + i * 100 + j)
+                        all_collected_frames.append((idx, img))
+
+            # Handle Video (Error)
+            if tool_response.video:
+                logger.warning("Multimedia type 'video' is not currently supported.")
+                raise NotImplementedError("Multimedia type 'video' is not currently supported.")
+
+            # Construct Message content for history (Text only, images are handled globally)
+            # We add placeholders for where images *would* be if we weren't aggregating them globally,
+            # or we just rely on the global image list being attached to the prompt.
+            # In this architecture, we treat the text response as a log of what was found.
+            content: list[dict[str, Any]] = []
+            
+            # Add placeholders for structure (optional, depends on model training, 
+            # here we assume the VLM just attends to the list of images provided in input)
+            if tool_response.image:
+                 for _ in range(len(tool_response.image) if isinstance(tool_response.image, list) else 1):
+                    content.append({"type": "image"})
+            
+            response_text = frame_annotation + (tool_response.text or "")
+            if response_text:
+                content.append({"type": "text", "text": response_text})
+            
+            message = {"role": "tool", "content": content}
+            add_messages.append(message)
+
+            if tool_reward is not None:
+                agent_data.tool_rewards.append(tool_reward)
+
+        # 3. Sort frames by time (frame_index)
+        # This ensures the model sees the visual narrative in correct order
+        all_collected_frames.sort(key=lambda x: x[0])
+        sorted_images = [img for _, img in all_collected_frames]
+
+        # 4. Generate Response using the sorted images
+        if self.processor is not None:
+            raw_tool_response = await self.loop.run_in_executor(
+                None,
+                lambda: self.processor.apply_chat_template(
+                    add_messages,
+                    add_generation_prompt=True,
+                    tokenize=False,
+                    **self.apply_chat_template_kwargs,
+                ),
+            )
+            
+            # Pass the globally sorted images here
+            current_images = sorted_images if sorted_images else None
+            
+            model_inputs = self.processor(text=[raw_tool_response], images=current_images, return_tensors="pt")
+            response_ids = model_inputs.pop("input_ids").squeeze(0).tolist()
+        else:
+            # Fallback for text-only (should not happen in this context)
+            response_ids = await self.loop.run_in_executor(
+                None,
+                lambda: self.tokenizer.apply_chat_template(add_messages, add_generation_prompt=True, tokenize=True),
+            )
+            response_ids = response_ids[len(self.system_prompt) :]
+
+        # 5. Commit state
+        if len(agent_data.response_mask) + len(response_ids) >= self.response_length:
+            return AgentState.TERMINATED
+
+        if add_messages:
+            agent_data.messages.extend(add_messages)
+        
+        # Add the SORTED images to the agent data
+        if len(sorted_images) > 0:
+            if agent_data.image_data is None:
+                agent_data.image_data = sorted_images
+            elif isinstance(agent_data.image_data, list):
+                agent_data.image_data.extend(sorted_images)
+            else:
+                agent_data.image_data = [agent_data.image_data] + sorted_images
+
+        agent_data.prompt_ids += response_ids
+        agent_data.response_mask += [0] * len(response_ids)
+        if agent_data.response_logprobs:
+            agent_data.response_logprobs += [0.0] * len(response_ids)
+        agent_data.user_turns += 1
+        
+        return AgentState.GENERATING

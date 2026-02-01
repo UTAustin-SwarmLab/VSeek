@@ -79,7 +79,7 @@ def _encode_frame(frame, max_side: int, quality: int) -> str:
     ret, buffer = cv2.imencode(".jpg", frame, encode_params)
     if not ret:
         raise ValueError("Could not encode frame")
-    return base64.b64encode(buffer).decode("utf-8")
+    return buffer.tobytes()
 
 
 if __name__ == "__main__":
@@ -315,6 +315,7 @@ if __name__ == "__main__":
                                     "topk": 4,
                                     "video_id": str(entry.get("metadata", {}).get("video_id")),
                                     "dataset": "videomme",
+                                    "puls": entry.get("puls", {}),
                                 },
                             },
                         },

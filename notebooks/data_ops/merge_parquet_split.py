@@ -1,7 +1,7 @@
 import os
 import datasets
 from tqdm import tqdm
-import traceback
+
 # ================= CONFIGURATION =================
 WINDOW_SIZE = 8
 PROMPT_TYPE = "tagsummary"
@@ -44,8 +44,7 @@ def fix_row(row, new_index):
         if isinstance(e_kwargs, dict) and 'video_id' in e_kwargs:
             e_kwargs['video_id'] = str(e_kwargs['video_id'])
     except Exception:
-        print(Exception)
-        print(traceback.format_exc())
+        pass
     
     row['extra_info'] = extra_info
     return row
@@ -81,13 +80,16 @@ def process_and_merge(dataset_names, split_name):
         # Load all parquet files for this dataset
         ds_rows = []
         for file_path in files:
+            if split_name == "test" and "test" not in file_path:
+                continue
+            if split_name == "train" and "train" not in file_path:
+                continue
             try:
                 ds = datasets.Dataset.from_parquet(file_path)
                 # Convert to list of dicts (pure Python)
                 ds_rows.extend(ds.to_list())
             except Exception as e:
                 print(f"  Error reading {file_path}: {e}")
-                print(traceback.format_exc())
         
         if not ds_rows:
             continue
@@ -132,7 +134,6 @@ if __name__ == "__main__":
         print("Verifying Train File...")
         train_ds = datasets.Dataset.from_parquet(os.path.join(OUTPUT_DIR, "train.parquet"))
         print(f"Verified: {len(train_ds)} rows")
-        print(train_ds[0])
         del train_ds
 
     # 2. Process Test

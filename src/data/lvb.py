@@ -147,55 +147,61 @@ class LongVideoBench(Manager):
     def load_data(self):
         category_buckets = defaultdict(list)
 
-        with open(
-            os.path.join(self._dataset_path, "lvb_val.json"), "r", encoding="utf-8"
-        ) as f:
-            dataset = json.load(f)
-            for item in dataset:
-                cat = item["question_category"]
-                # if (
-                #     cat in self._categories
-                #     and len(category_buckets[cat]) < self.read_number
-                # ):
-                video_path = os.path.join(
-                    self._burned_path, "burn-subtitles", f"{item['video_id']}.mp4"
-                )
-                if not os.path.exists(video_path):
-                    print(f"Burnt Video Does Not Exist: {video_path}")
-                    # continue
+        if os.path.exists(os.path.join(self._dataset_path, "puls.json")):
+            print(f"Loading LVB dataset from {os.path.join(self._dataset_path, 'puls.json')}")
+            with open(os.path.join(self._dataset_path, "puls.json"), "r") as f:
+                dataset = json.load(f)
+            return dataset
+        else:
+            with open(
+                os.path.join(self._dataset_path, "lvb_val.json"), "r", encoding="utf-8"
+            ) as f:
+                dataset = json.load(f)
+                for item in dataset:
+                    cat = item["question_category"]
+                    # if (
+                    #     cat in self._categories
+                    #     and len(category_buckets[cat]) < self.read_number
+                    # ):
+                    video_path = os.path.join(
+                        self._burned_path, "burn-subtitles", f"{item['video_id']}.mp4"
+                    )
+                    if not os.path.exists(video_path):
+                        print(f"Burnt Video Does Not Exist: {video_path}")
+                        continue
 
-                raw_video_path = os.path.join(
-                    self._dataset_path, "videos", item["video_path"]
-                )
-                subtitle_path = os.path.join(
-                    self._dataset_path, "subtitles", item["subtitle_path"]
-                )
-                question = "\n This is a multiple choice question. You must choose the correct answer as a number or letter of the option. \n"
-                question += f"Question: {item['question']} \n"
-                # for choice_idx, candidate in enumerate(item["candidates"]):
-                #     question += f"\n{choice_idx}. {candidate}"
-     
-                ground_truth_frames = []
-                entry = {
-                    "question": question,
-                    "candidates": item["candidates"],
-                    "correct_choice": item["correct_choice"],
-                    "paths": {
-                        "raw_video_path": raw_video_path,
-                        "subtitle_path": subtitle_path,
-                        "video_path": video_path,
-                    },
-                    "metadata": {
-                        "video_id": str(item["video_id"]),
-                        "id": str(item["id"]),
-                        "original_data": json.dumps(item),
-                    },
+                    raw_video_path = os.path.join(
+                        self._dataset_path, "videos", item["video_path"]
+                    )
+                    subtitle_path = os.path.join(
+                        self._dataset_path, "subtitles", item["subtitle_path"]
+                    )
+                    question = "\n This is a multiple choice question. You must choose the correct answer as a number or letter of the option. \n"
+                    question += f"Question: {item['question']} \n"
+                    # for choice_idx, candidate in enumerate(item["candidates"]):
+                    #     question += f"\n{choice_idx}. {candidate}"
+        
+                    ground_truth_frames = []
+                    entry = {
+                        "question": question,
+                        "candidates": item["candidates"],
+                        "correct_choice": item["correct_choice"],
+                        "paths": {
+                            "raw_video_path": raw_video_path,
+                            "subtitle_path": subtitle_path,
+                            "video_path": video_path,
+                        },
+                        "metadata": {
+                            "video_id": str(item["video_id"]),
+                            "id": str(item["id"]),
+                            "original_data": json.dumps(item),
+                        },
 
-                }
-                category_buckets[cat].append(entry)
+                    }
+                    category_buckets[cat].append(entry)
 
-        # Flatten list of all selected entries from each category
-        return [entry for entries in category_buckets.values() for entry in entries]
+            # Flatten list of all selected entries from each category
+            return [entry for entries in category_buckets.values() for entry in entries]
 
     
 

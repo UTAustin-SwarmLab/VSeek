@@ -152,7 +152,7 @@ done
 #### Burn Subtitles
 
 ```bash
-python3 scripts/utils/burn_subtitles.py --json-file lvb_val.json --output-dir /nas/mars/dataset/longvideobench --data-folder /nas/mars/dataset/longvideobench/LongVideoBench/
+python3 scripts/utils/burn_subtitles.py --json-file lvb_val.json --output-dir /nas/mars/dataset/longvideobench/burn-subtitles --data-folder /nas/mars/dataset/longvideobench/LongVideoBench/
 ```
 
 #### Run indexing to target window size
@@ -166,6 +166,9 @@ python3 scripts/data_ops/run_data_pipeline.py \
     retriever.index_path="/home/hg22723/vseek/dataset"
 ```
 
+```bash
+ python3 src/vseek/puls/primitives.py dataset.name='lvb'
+```
 #### Run data preprocessing to create train and test parquets for RL
 
 python3
@@ -177,9 +180,9 @@ bash scripts/data_ops/preprocess_lvb.sh \
     --local_save_dir /nas/mars/dataset/longvideobench \
     --index_path /home/hg22723/vseek/dataset \
     --window_size 8 \
-    --prompt_type tag
+    --prompt_type tagsummary
 ```
-
+# tag and tagsummary
 
 ### LVBench 
 #### Unzip Videos and convert parquet
@@ -201,7 +204,9 @@ python3 scripts/data_ops/run_data_pipeline.py \
     dataset.lvbench.burned_path="/nas/mars/dataset/LVBench/videos" \
     retriever.index_path="/home/hg22723/vseek/dataset"
 ```
-
+```bash
+ python3 src/vseek/puls/primitives.py dataset.name='lvbench'
+```
 #### Run data preprocessing to create train and test parquets for RL
 
 python3
@@ -213,7 +218,7 @@ bash scripts/data_ops/preprocess_lvbench.sh \
     --local_save_dir /nas/mars/dataset/LVBench \
     --index_path /home/hg22723/vseek/dataset \
     --window_size 8 \
-    --prompt_type tag
+    --prompt_type tagsummary
 ```
 
 ### Video-MME
@@ -222,6 +227,8 @@ bash scripts/data_ops/preprocess_lvbench.sh \
 ```bash
 SUBTITLE_DIR=/nas/mars/dataset/Video-MME CHUNKS_DIR=/nas/mars/dataset/Video-MME OUTPUT_DIR=/nas/mars/dataset/Video-MME/videos bash scripts/utils/unzip_videos.sh
 ```
+
+
 ```bash
 python3 scripts/utils/convert_parquet.py --parquet_path /nas/mars/dataset/Video-MME/videomme/test-00000-of-00001.parquet --json_path /nas/mars/dataset/Video-MME/videomme/videomme_val.json
 ```
@@ -241,7 +248,11 @@ python3 scripts/utils/burn_subtitles.py --json-file videomme/videomme_val.json -
     retriever.window_size=8 \
     dataset.videomme.dataset_path=/nas/mars/dataset/Video-MME/ \
     dataset.videomme.burned_path=/nas/mars/dataset/Video-MME/burn-subtitles/ \
-    retriever.index_path=/home/hg22723/vseek/dataset
+    retriever.index_path=/home/hg22723/vseek/dataset \
+    retriever.gpu_number=0
+```
+```bash
+ python3 src/vseek/puls/primitives.py dataset.name='videomme'
 ```
 
 #### Run data preprocessing to create train and test parquets for RL
@@ -255,7 +266,7 @@ bash scripts/data_ops/preprocess_videomme.sh \
     --local_save_dir /nas/mars/dataset/Video-MME \
     --index_path /home/hg22723/vseek/dataset \
     --window_size 8 \
-    --prompt_type tag
+    --prompt_type tagsummary
 ```
 
 ### MLVU
@@ -267,23 +278,27 @@ plotQA, needle, ego, count, order, anomaly_reco, topic_reasoning
 ```bash
 python3 scripts/data_ops/run_data_pipeline.py \
     retriever.window_size=8 dataset.name='mlvu' \
-    dataset.mlvu.dataset_path="/nas/mars/dataset/MVLU/MVLU" \
-    dataset.mlvu.burned_path="/nas/mars/dataset/MVLU/MVLU" \
+    dataset.mlvu.dataset_path="/nas/mars/dataset/MLVU/MLVU" \
+    dataset.mlvu.burned_path="/nas/mars/dataset/MLVU/MLVU" \
     retriever.index_path="/home/hg22723/vseek/dataset"
 ```
 
 #### Run data preprocessing to create train and test parquets for RL
 
+```bash
+ python3 src/vseek/puls/primitives.py dataset.name='mlvu'
+```
+
 python3
 ```bash
-bash scripts/data_ops/preprocess_mvlu.sh \
+bash scripts/data_ops/preprocess_mlvu.sh \
     --local_dataset_path "/nas/mars/dataset/MLVU/MLVU" \
     --burned_path "/nas/mars/dataset/MLVU/MLVU" \
     --train_ratio 0.8 \
-    --local_save_dir /nas/mars/dataset/MVLU \
+    --local_save_dir /nas/mars/dataset/MLVU \
     --index_path /home/hg22723/vseek/dataset \
     --window_size 8 \
-    --prompt_type tag
+    --prompt_type tagsummary
 
 # Option 2: Use the convenience script
 bash scripts/preprocess_mvlu.sh

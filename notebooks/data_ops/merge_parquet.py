@@ -63,7 +63,7 @@ dataset_paths = [
     '/nas/mars/dataset/Video-MME'
 ]
 
-train_datasets = ["/nas/mars/dataset/longvideobench/",  "/nas/mars/dataset/LVBench/", "/nas/mars/dataset/Video-MME/"]
+train_datasets = ["/nas/mars/dataset/longvideobench/",  "/nas/mars/dataset/Video-MME/"]
 test_datasets =  ["/nas/mars/dataset/MLVU/"]
 
 training_paths = []
@@ -132,10 +132,10 @@ test_dfs = []
 # Or maybe they just wanted to concat everything?
 # I will stick to the original logic: initialize test_dfs with the combined train dataframe.
 
-if isinstance(train_dfs, pd.DataFrame):
-    test_dfs = [train_dfs]
-else:
-    test_dfs = []
+# if isinstance(train_dfs, pd.DataFrame):
+#     test_dfs = [train_dfs]
+# else:
+#     test_dfs = []
 
 
 for path in test_paths:
