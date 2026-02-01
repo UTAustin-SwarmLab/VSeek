@@ -185,12 +185,17 @@ class VideoSearchServer:
                 topk = int(request.args.get("topk", self.topk))
                 video_id = request.args.get("video_id")
                 dataset_name = request.args.get("dataset_name")
+                puls = request.args.get("puls", None)
             else:  # POST
                 data = request.get_json()
                 query = data.get("query")
                 topk = data.get("topk", self.topk)
                 video_id = data.get("video_id")
                 dataset_name = data.get("dataset_name")
+                puls = data.get("puls", None)
+            
+            if isinstance(puls, str):
+                puls = json.loads(puls)
             if not query:
                 return jsonify({"error": "Query parameter is required"}), 400
             
@@ -246,7 +251,7 @@ class VideoSearchServer:
             window_indices = [visual_embeddings_keys[i] for i in frame_indices]
             # Return frame indices in ascending order
             
-                        proposition = puls.get("proposition", [])
+            proposition = puls.get("proposition", [])
             proposition_existence = {prop: 0 for prop in proposition}
             
             
@@ -256,21 +261,17 @@ class VideoSearchServer:
                         proposition_existence[prop] = 1
                 else:
                     
-                    prop_embedding = self.retriever.get_text_embedding(prop)
+                    prop_embedding = self.retriever.get_text_embedding(prop).squeeze()
                     prop_embedding = prop_embedding / prop_embedding.norm(dim=-1, keepdim=True)
                     prop_embedding = prop_embedding.to(device)
                     # get the visual embeddings corresponding to the retrieved windows
-                    visual_embeddings = [self.video_embeddings[dataset_name][video_id][window] for window in windows_retrieved]
+                    visual_embeddings = [self.video_embeddings[dataset_name][video_id][window] for window in window_indices]
                     visual_embeddings = torch.stack(visual_embeddings)
                     visual_embeddings = visual_embeddings / visual_embeddings.norm(dim=-1, keepdim=True)
                     visual_embeddings = visual_embeddings.to(device)
                     # Compute cosine similarities on GPU
                     similarities = torch.matmul(visual_embeddings, prop_embedding)
-                    
-                    if torch.max(similarities) > 0.7:
-                        proposition_existence[prop] = 1
-                    else:
-                        proposition_existence[prop] = 0
+                    proposition_existence[prop] = torch.max(similarities).item()
             
                 
             
@@ -314,6 +315,10 @@ class VideoSearchServer:
                 video_id = data.get("video_id")
                 dataset_name = data.get("dataset_name")
                 puls = data.get("puls", None)
+            
+            if isinstance(puls, str):
+                puls = json.loads(puls)
+                
             if not query:
                 return jsonify({"error": "Query parameter is required"}), 400
             
@@ -408,10 +413,10 @@ class VideoSearchServer:
             for prop in proposition:
                 if 'subtitle_' in prop:
                     if query in prop:
-                        proposition_existence[prop] = 1
+                        proposition_existence[prop] = 1.
                 else:
                     
-                    prop_embedding = self.retriever.get_text_embedding(prop)
+                    prop_embedding = self.retriever.get_text_embedding(prop).squeeze()
                     prop_embedding = prop_embedding / prop_embedding.norm(dim=-1, keepdim=True)
                     prop_embedding = prop_embedding.to(device)
                     # get the visual embeddings corresponding to the retrieved windows
@@ -421,11 +426,8 @@ class VideoSearchServer:
                     visual_embeddings = visual_embeddings.to(device)
                     # Compute cosine similarities on GPU
                     similarities = torch.matmul(visual_embeddings, prop_embedding)
-                    
-                    if torch.max(similarities) > 0.7:
-                        proposition_existence[prop] = 1
-                    else:
-                        proposition_existence[prop] = 0
+
+                    proposition_existence[prop] = torch.max(similarities).item()
             
             
             response_data = {
