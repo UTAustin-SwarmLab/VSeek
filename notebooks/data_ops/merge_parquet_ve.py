@@ -1,14 +1,14 @@
 import os
 import datasets
 from tqdm import tqdm
-
+import traceback
 # ================= CONFIGURATION =================
 WINDOW_SIZE = 8
 PROMPT_TYPE = "tagsummary"
 DATA_ROOT = "/nas/mars/dataset"
 OUTPUT_DIR = f"/nas/mars/vseek/data/{PROMPT_TYPE}"
 
-TRAIN_DATASETS = ["longvideobench",  "Video-MME"]
+TRAIN_DATASETS = ["longvideobench",  "Video-MME", "MLVU"]
 TEST_DATASETS = ["longvideobench",  "Video-MME", "MLVU"]
 
 # ================= HELPER FUNCTION =================
@@ -44,7 +44,8 @@ def fix_row(row, new_index):
         if isinstance(e_kwargs, dict) and 'video_id' in e_kwargs:
             e_kwargs['video_id'] = str(e_kwargs['video_id'])
     except Exception:
-        pass
+        print(Exception)
+        print(traceback.format_exc())
     
     row['extra_info'] = extra_info
     return row
@@ -86,6 +87,7 @@ def process_and_merge(dataset_names, split_name):
                 ds_rows.extend(ds.to_list())
             except Exception as e:
                 print(f"  Error reading {file_path}: {e}")
+                print(traceback.format_exc())
         
         if not ds_rows:
             continue
@@ -119,7 +121,7 @@ if __name__ == "__main__":
         save_path = os.path.join(OUTPUT_DIR, "train.parquet")
         print(f"Creating dataset and saving to {save_path}...")
         train_ds = datasets.Dataset.from_list(train_rows)
-        train_ds.to_parquet(save_path)
+        train_ds.to_parquet(save_path, compression="zstd")
         print(f"✅ Train Done. {len(train_ds)} rows saved.")
         del train_ds
     
@@ -139,7 +141,7 @@ if __name__ == "__main__":
         save_path = os.path.join(OUTPUT_DIR, "test.parquet")
         print(f"Creating dataset and saving to {save_path}...")
         test_ds = datasets.Dataset.from_list(test_rows)
-        test_ds.to_parquet(save_path)
+        test_ds.to_parquet(save_path, compression="zstd")
         print(f"✅ Test Done. {len(test_ds)} rows saved.")
         del test_ds
     
