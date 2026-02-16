@@ -13,36 +13,74 @@ from omegaconf import DictConfig
 OUTPUT_DIR = "output"
 
 
-def build_options_string(candidates: list[str]) -> str:
-    lines = [f"{idx + 1}. {text}" for idx, text in enumerate(candidates)]
+def build_options_string(candidates: list[str], dataset_name: str) -> str:
+    if dataset_name == "lvb":
+        lines = [f"{idx}. {text}" for idx, text in enumerate(candidates)]
+    elif dataset_name == "lvbench":
+        lines = [f"{text}" for idx, text in enumerate(candidates)]
+    elif dataset_name == "videomme":
+        lines = [f"{text}" for idx, text in enumerate(candidates)]
+    elif dataset_name == "mlvu":
+        lines = [f"{text}" for idx, text in enumerate(candidates)]
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
     return "\n".join(lines)
 
 
-def parse_answer(answer: str) -> str:
-    """Parse the agent's answer to extract the choice number."""
+def parse_answer_single(answer: str) -> str:
     import re
     if answer is None:
         return ""
-    # Try to find a number in the answer
-    numbers = re.findall(r'\d+', answer)
+    numbers = re.findall(r"\d+", answer)
+    letters = re.findall(r"[a-zA-Z]+", answer)
     if numbers:
-        return numbers[0]  # Return the first number found
+        return numbers[0]
+    if letters:
+        return letters[0]
     return ""
 
+def parse_answer_base(answer: str) -> str:
+    import re
+    if answer is None:
+        return ""
+    numbers = re.findall(r"(\d+)", answer)
+    letters = re.findall(r"[a-zA-Z]+", answer)
+    if letters:
+        return letters[0]
+    if numbers:
+        return numbers[0]
+    return ""
 
-def calculate_accuracy(results: list[dict]) -> float:
-    """Calculate accuracy by comparing predicted vs ground truth choices."""
+def parse_answer_cot(answer: str) -> str:
+    import re
+    if answer is None:
+        return ""
+    # numbers = re.findall(r"<\s*answer\s*>([\s\S]*?)<\s*/\s*answer\s*>", answer, flags=re.IGNORECASE)
+    numbers = re.findall(r"### (\d+)", answer)
+    letters = re.findall(r"### ([a-zA-Z]+)", answer)
+    if letters:
+        return letters[-1].strip()
+    return numbers[-1].strip() if numbers else ""
+
+def calculate_accuracy(results: list[dict], agent_prompt_type: str="base") -> float:
     if not results:
         return 0.0
-    
     correct = 0
     for result in results:
-        pred = parse_answer(result["pred"])
+        if agent_prompt_type == "base":
+            pred = parse_answer_base(result["pred"])
+        elif agent_prompt_type == "cot":
+            pred = parse_answer_cot(result["pred"])
+        else:
+            raise ValueError(f"Invalid agent prompt type: {agent_prompt_type}")
         gt = str(result["gt"])
         if pred == gt:
             correct += 1
-    
     return correct / len(results)
+
+def write_results(results: list[dict], file_path: str):
+    with open(file_path, "w") as f:
+        json.dump(results, f)
 
 
 @hydra.main(version_base=None, config_path="../src/vseek/config/retriever", config_name="config")
