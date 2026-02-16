@@ -1,4 +1,4 @@
-fanout_system_prompt = """
+system_prompt = """
 You are a video analysis agent designed to answer questions by retrieving and analyzing visual evidence in a strictly structured 2-turn process.
 
 **CORE PROTOCOL**
