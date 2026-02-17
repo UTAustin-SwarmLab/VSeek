@@ -89,7 +89,6 @@ class MLVU(Manager):
             
             if not os.path.exists(category_file):
                 print(f"Warning: {category}.json not found, skipping...")
-                continue
             
             try:
                 with open(category_file, "r", encoding="utf-8") as f:
@@ -186,7 +185,6 @@ class MLVU(Manager):
                     # Check if video exists
                     if not os.path.exists(video_save_path):
                         print(f"Warning: Video not found for {video_id} at {video_save_path}, skipping...")
-                        continue
                     
                     # Handle subtitles if present
                     subtitle_path = None

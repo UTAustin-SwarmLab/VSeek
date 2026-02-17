@@ -186,7 +186,6 @@ class VideoMME(Manager):
                     # Check if video exists
                     if not os.path.exists(video_save_path) and not os.path.exists(video_path):
                         print(f"Warning: Video not found for {video_id} at {video_save_path}, skipping...")
-                        continue
                     
                     # Handle subtitles if present (SRT format)
                     subtitle_filename = video_filename.replace('.mp4', '.srt')

@@ -168,7 +168,6 @@ class LongVideoBench(Manager):
                     )
                     if not os.path.exists(video_path):
                         print(f"Burnt Video Does Not Exist: {video_path}")
-                        continue
 
                     raw_video_path = os.path.join(
                         self._dataset_path, "videos", item["video_path"]

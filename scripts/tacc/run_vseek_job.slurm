@@ -3,8 +3,8 @@
 #SBATCH -o vseek_job-%j.out
 #SBATCH -e vseek_job-%j.err
 #SBATCH -p gh
-#SBATCH -N 2
-#SBATCH -n 2
+#SBATCH -N 8
+#SBATCH -n 8
 #SBATCH --cpus-per-task=16
 #SBATCH -t 48:00:00
 #SBATCH --mem=0
@@ -342,7 +342,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=64 \
     +ray_kwargs.ray_init.address="auto" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.max_num_batched_tokens=98304 \
@@ -352,7 +352,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
     actor_rollout_ref.rollout.free_cache_engine=True  \
     actor_rollout_ref.rollout.enforce_eager=True \
-    actor_rollout_ref.rollout.n=4 \
+    actor_rollout_ref.rollout.n=5 \
     actor_rollout_ref.rollout.multi_turn.format="hermes" \
     actor_rollout_ref.rollout.over_sample_rate=0.1 \
     actor_rollout_ref.rollout.mode=async \

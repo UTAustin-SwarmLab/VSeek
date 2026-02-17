@@ -181,7 +181,7 @@ class VideoRAGAgent(VLLMClient):
         chat_response = self.client.chat.completions.create(
             model=self.model,
             messages=message_content,
-            max_tokens=500,
+            max_tokens=1024,
             temperature=self.temperature,
             logprobs=True,
             top_logprobs=20,
