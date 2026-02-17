@@ -10,6 +10,13 @@
     - "<search>(.*?)</search>"
     - "<search_subtitle>(.*?)</search_subtitle>"
     - "<search_summary>(.*?)</search_summary>"
+  
+- name: vseek_fanout_agent
+  _target_: src.vseek.agent.vllm_rollout.VSeekFanoutAgentLoop
+  tags:
+    - "<search>(.*?)</search>"
+    - "<search_subtitle>(.*?)</search_subtitle>"
+    - "<search_summary>(.*?)</search_summary>"
 
 - name: vseek_json_agent
   _target_: src.vseek.agent.vllm_rollout.VSeekJSONAgentLoop
