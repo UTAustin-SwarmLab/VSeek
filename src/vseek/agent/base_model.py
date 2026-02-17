@@ -30,7 +30,7 @@ class LocalVLLMBase:
         engine_args = AsyncEngineArgs(
             model=self.model_path,
             tensor_parallel_size=1,
-            gpu_memory_utilization=0.8,
+            gpu_memory_utilization=0.7,
             enforce_eager=True,
             mm_processor_kwargs={
                 "max_pixels": int(self.max_image_width) * int(self.max_image_height),
