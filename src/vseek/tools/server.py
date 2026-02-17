@@ -250,29 +250,30 @@ class VideoSearchServer:
             frame_indices = sorted_indices.cpu().tolist()[:topk]
             window_indices = [visual_embeddings_keys[i] for i in frame_indices]
             # Return frame indices in ascending order
-            
-            proposition = puls.get("proposition", [])
-            proposition_existence = {prop: 0 for prop in proposition}
-            
-            
-            for prop in proposition:
-                if 'subtitle_' in prop:
-                    if query in prop:
-                        proposition_existence[prop] = 1
-                else:
-                    
-                    prop_embedding = self.retriever.get_text_embedding(prop).squeeze()
-                    prop_embedding = prop_embedding / prop_embedding.norm(dim=-1, keepdim=True)
-                    prop_embedding = prop_embedding.to(device)
-                    # get the visual embeddings corresponding to the retrieved windows
-                    visual_embeddings = [self.video_embeddings[dataset_name][video_id][window] for window in window_indices]
-                    visual_embeddings = torch.stack(visual_embeddings)
-                    visual_embeddings = visual_embeddings / visual_embeddings.norm(dim=-1, keepdim=True)
-                    visual_embeddings = visual_embeddings.to(device)
-                    # Compute cosine similarities on GPU
-                    similarities = torch.matmul(visual_embeddings, prop_embedding)
-                    proposition_existence[prop] = torch.max(similarities).item()
-            
+            proposition_existence = {}
+            if puls is not None:
+                proposition = puls.get("proposition", [])
+                proposition_existence = {prop: 0 for prop in proposition}
+                
+                
+                for prop in proposition:
+                    if 'subtitle_' in prop:
+                        if query in prop:
+                            proposition_existence[prop] = 1
+                    else:
+                        
+                        prop_embedding = self.retriever.get_text_embedding(prop).squeeze()
+                        prop_embedding = prop_embedding / prop_embedding.norm(dim=-1, keepdim=True)
+                        prop_embedding = prop_embedding.to(device)
+                        # get the visual embeddings corresponding to the retrieved windows
+                        visual_embeddings = [self.video_embeddings[dataset_name][video_id][window] for window in window_indices]
+                        visual_embeddings = torch.stack(visual_embeddings)
+                        visual_embeddings = visual_embeddings / visual_embeddings.norm(dim=-1, keepdim=True)
+                        visual_embeddings = visual_embeddings.to(device)
+                        # Compute cosine similarities on GPU
+                        similarities = torch.matmul(visual_embeddings, prop_embedding)
+                        proposition_existence[prop] = torch.max(similarities).item()
+                
                 
             
             response_data = {
@@ -292,8 +293,9 @@ class VideoSearchServer:
 
         except Exception as e:
             logger.error(f"Search failed: {str(e)}")
+            traceback.print_exc()
             return jsonify({"error": f"Search failed: {str(e)}"}), 500
-    
+        
     def search_subtitle(self):
         """Search for the most similar subtitle to the text query.
 
@@ -405,29 +407,30 @@ class VideoSearchServer:
             # Return top-k results
             
             # puls related processings
-            
-            proposition = puls.get("proposition", [])
-            proposition_existence = {prop: 0 for prop in proposition}
-            
-            
-            for prop in proposition:
-                if 'subtitle_' in prop:
-                    if query in prop:
-                        proposition_existence[prop] = 1.
-                else:
-                    
-                    prop_embedding = self.retriever.get_text_embedding(prop).squeeze()
-                    prop_embedding = prop_embedding / prop_embedding.norm(dim=-1, keepdim=True)
-                    prop_embedding = prop_embedding.to(device)
-                    # get the visual embeddings corresponding to the retrieved windows
-                    visual_embeddings = [self.video_embeddings[dataset_name][video_id][window] for window in windows_retrieved]
-                    visual_embeddings = torch.stack(visual_embeddings)
-                    visual_embeddings = visual_embeddings / visual_embeddings.norm(dim=-1, keepdim=True)
-                    visual_embeddings = visual_embeddings.to(device)
-                    # Compute cosine similarities on GPU
-                    similarities = torch.matmul(visual_embeddings, prop_embedding)
+            proposition_existence = {}
+            if puls is not None:
+                proposition = puls.get("proposition", [])
+                proposition_existence = {prop: 0 for prop in proposition}
+                
+                
+                for prop in proposition:
+                    if 'subtitle_' in prop:
+                        if query in prop:
+                            proposition_existence[prop] = 1.
+                    else:
+                        
+                        prop_embedding = self.retriever.get_text_embedding(prop).squeeze()
+                        prop_embedding = prop_embedding / prop_embedding.norm(dim=-1, keepdim=True)
+                        prop_embedding = prop_embedding.to(device)
+                        # get the visual embeddings corresponding to the retrieved windows
+                        visual_embeddings = [self.video_embeddings[dataset_name][video_id][window] for window in windows_retrieved]
+                        visual_embeddings = torch.stack(visual_embeddings)
+                        visual_embeddings = visual_embeddings / visual_embeddings.norm(dim=-1, keepdim=True)
+                        visual_embeddings = visual_embeddings.to(device)
+                        # Compute cosine similarities on GPU
+                        similarities = torch.matmul(visual_embeddings, prop_embedding)
 
-                    proposition_existence[prop] = torch.max(similarities).item()
+                        proposition_existence[prop] = torch.max(similarities).item()
             
             
             response_data = {
