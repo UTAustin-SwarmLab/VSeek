@@ -164,9 +164,9 @@ def compute_score(
                     else:
                         total_score += format_score
             elif score_key == 'puls':
-                if 'tool_extra_fields' not in extra_info:
-                    raise ValueError("tool_extra_fields not found in extra_info")
-                all_puls = extra_info.get('tool_extra_fields', {}).get('tool_rewards', {})
+                if 'tool_rewards' not in extra_info:
+                    raise ValueError("tool_rewards not found in extra_info")
+                all_puls = extra_info.get('tool_rewards', {})
                 puls_score = 0.0
                 consolidated_puls = {}
                 puls_threshold = kwargs.get('puls_threshold')
