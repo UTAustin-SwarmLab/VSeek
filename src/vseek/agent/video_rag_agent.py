@@ -4,20 +4,22 @@ import requests
 from vseek.agent.utils.parse_response import parse_response_with_regex
 from vseek.data.exp_io import DataInput
 from vseek.data.vseek_dm import ReasoningTrajectory
-from vseek.vlm.vllm_client import VLLMClient
+import requests
+
+from vseek.agent.utils.parse_response import parse_response_with_regex
+from vseek.data.exp_io import DataInput
+from vseek.data.vseek_dm import ReasoningTrajectory
+from vseek.agent.base_model import LocalVLLMBase
 
 
-class VideoRAGAgent(VLLMClient):
+class VideoRAGAgent(LocalVLLMBase):
     def __init__(
         self,
         config=None,
 
     ):
 
-        api_key = config.llm.openai_api_key
-        api_base = config.llm.server_url
-        model = config.llm.model
-        super().__init__(api_key=api_key, api_base=api_base, model=model)
+        super().__init__(config=config)
         self.cfg = config
         self.max_image_width = config.inference.max_image_width
         self.max_image_height = config.inference.max_image_height
@@ -25,6 +27,8 @@ class VideoRAGAgent(VLLMClient):
         self.temperature =  config.inference.temperature
         self._retriever_server_url = config.retriever.server_url
         self._topk = self.cfg.inference.topk
+        self.agent_prompt_type = config.inference.get("agent_prompt_type", "base")
+        self.dataset_name = config.dataset.name
 
     def _encode_frame(self, frame):
         """Override parent method to use custom image dimensions and quality."""
@@ -35,7 +39,7 @@ class VideoRAGAgent(VLLMClient):
             quality=self.image_quality
         )
 
-    def run(
+    async def run(
         self,
         data_input: DataInput,
         max_parse_attempts: int = 3,
@@ -115,30 +119,25 @@ class VideoRAGAgent(VLLMClient):
 
         # """
 
-        system_prompt = """
-
-        You are a video analysis assistant. You will be given a question and access to a video. Your task is to answer the question in a step-by-step manner by analyzing the video.
-        **INSTRUCTIONS**:
-        1. Read the user's question carefully.
-        2. At each step, based on the video frames provided, you must carefully consider the question and the current frames to determine if you can directly answer the question or if you need to search for the answer within the <think> and </think> tags.
-        3. You must think within <think> </think> tags, and reason whether the current frames are sufficient to answer the question. 
-        4. If you can definitively answer the question with the current frames, provide the final answer inside <answer> and </answer> tags.
-
-        EXAMPLE 1:
-        Question: What is the first ingredient the chef adds to the mixing bowl? Options: A. , B. Sugar, C. Salt, D. Flour
-
-        (the agent receives frames of the chef pouring flour into the bowl.)
-        <think>To answer the question, I first need to locate the part of the video where the chef is using a mixing bowl.</think>
-        <answer>D</answer>
-
-        EXAMPLE 2: Temporal Reasoning 
-        Question: What does the person do right after picking up the red ball? Options: A.Put it in a box , B. Throw it to a dog, C. Put it on a shelf, D. Put it in a bag
         
-        (the agent receives frames of a person bending over and grabbing a red ball.)
-        <think>I need to first find the moment the person picks up the red ball. I also have found the event where the person picks up the red ball. Now I need to observe the immediate next action to answer the question. The immediate next action is throwing the ball to a dog hence I can answer the question with the option B.</think>
-        <answer>B</answer>
-        """
-        
+        if self.agent_prompt_type == "base" or self.agent_prompt_type == "single":
+            system_prompt = """
+                You are a helpful assistant. Look at the provided images retrieved from a video and must choose the correct option from the given options to answer the question.
+                You must only output the number of the correct option without thinking. Eg. 3
+                
+            """
+        elif self.agent_prompt_type == "cot":
+            system_prompt = """
+                You are a helpful assistant. Look at the provided images that have been retrieved from a video and answer the question concisely.
+                **INSTRUCTIONS**:
+                1. First think very concisely within 100 words, about the question and the provided images within the <think> and </think> tags.
+                2. You must provide the final answer the question with the correct option after ###.
+                3. Do not provide empty fields and you must provide an answer to the best of your ability.
+                4. For example.
+                <think>I have found the mixing bowl, but no ingredients have been added yet. I need to find the next action where something is put into the bowl.</think>
+                ### 3
+                """
+
         iteration = 0
         parse_attempts = 0
         reasoning_trajectory = []
@@ -148,13 +147,15 @@ class VideoRAGAgent(VLLMClient):
 
         video_window_idx = 0
         question_substrring = data_input.question.split("here are the candidates:")[0]
+        question_substrring = question_substrring.split("Question:")[1]
         search_indices = self.search_video(
             search_query=question_substrring,
             video_id=getattr(data_input, "video_id", None),
-            topk=self._topk,
+            topk=self._topk
         )
         video_window_idx = sorted(search_indices[: self._topk])
         print("video_window_idx: ", video_window_idx)
+        
         user_content = [
                     {
                         "type": "text",
@@ -170,79 +171,29 @@ class VideoRAGAgent(VLLMClient):
         # # Build the user message: a text prompt plus one image for each frame.
 
         for encoded in encoded_images:
-            user_content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
-                }
-            )
-        message_content.append({"role": "user", "content": user_content})
+            user_content.append({
+                "type": "image_url", 
+                "image_url": f"data:image/jpeg;base64,{encoded}"
+            })
 
-        chat_response = self.client.chat.completions.create(
-            model=self.model,
-            messages=message_content,
-            max_tokens=500,
-            temperature=self.temperature,
-            logprobs=True,
-            top_logprobs=20,
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content}
+        ]
+
+        content = await self.generate_text(messages)
+
+        return ReasoningTrajectory(
+            reasoning_trajectory=[],
+            is_found_answer=True,
+            answer=content
         )
-        content = chat_response.choices[0].message.content
 
-        # Parse the response using tag-based format
-        agent_output = parse_response_with_regex(content)
-        message_content.append({"role": "assistant", "content": content})
-        if agent_output is None:
-            if parse_attempts >= max_parse_attempts:
-                return ReasoningTrajectory(
-                    reasoning_trajectory=reasoning_trajectory,
-                    is_error=True,
-                    error_message="Error parsing response with tag-based parser after max attempts",
-                )
-            parse_attempts += 1  # engineering iteration
 
-        # TODO: agent needs to handle the search_subtitle case
-        if agent_output:
-            reasoning_trajectory.append(agent_output)
-
-            if agent_output.answer:
-                return ReasoningTrajectory(
-                    reasoning_trajectory=reasoning_trajectory,
-                    is_found_answer=True,
-                    answer=agent_output.answer,
-                )
-            else:
-                return ReasoningTrajectory(
-                    reasoning_trajectory=reasoning_trajectory,
-                    is_found_answer=False,
-                )
-        else:
-            return ReasoningTrajectory(
-                reasoning_trajectory=reasoning_trajectory,
-                is_found_answer=False,
-            )
-            # elif agent_output.search or agent_output.subtitle:
-            #     # search
-                
-            #     if agent_output.search:
-            #         embeddings = video_frames.embeddings
-            #         search_indices = self.search_video(embeddings, agent_output.search)
-            #     elif agent_output.subtitle:
-            #         search_indices = self.search_subtitle(video_frames.subtitles, agent_output.subtitle)
-            #     print("Search indices: ", search_indices)
-            #     # Use the most relevant video segment for next iteration
-            #     if search_indices:
-            #         video_window_idx = search_indices[:1]
-
-            #     iteration += 1
-            #     if iteration >= max_reasoning_attempts:
-            #         return ReasoningTrajectory(
-            #             reasoning_trajectory=reasoning_trajectory,
-            #             is_found_answer=False,
-            #         )
 
     def search_video(self, search_query: str, video_id: str | None = None, topk: int | None = None) -> list[int]:
         server_url = self._retriever_server_url or "http://127.0.0.1:9000"
-        params = {"query": search_query}
+        params = {"query": search_query, "dataset_name": self.dataset_name}
         if topk is not None:
             params["topk"] = int(topk)
         if video_id:
@@ -257,7 +208,7 @@ class VideoRAGAgent(VLLMClient):
 
     def search_subtitle(self, search_query: str, video_id: str | None = None, topk: int | None = None) -> list[int]:
         server_url = self._retriever_server_url or "http://127.0.0.1:9000"
-        params = {"query": search_query}
+        params = {"query": search_query, "dataset_name": self.dataset_name}
         if topk is not None:
             params["topk"] = int(topk)
         if video_id:
