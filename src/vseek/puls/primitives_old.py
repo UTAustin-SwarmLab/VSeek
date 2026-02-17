@@ -53,26 +53,6 @@ def process_specification(specification, propositions):
 
     return new_propositions, specification
 
-def resolve_correct_answer_text(candidates, correct_choice):
-    if not isinstance(candidates, list) or not candidates:
-        return ""
-
-    if isinstance(correct_choice, int):
-        idx = correct_choice
-    else:
-        choice_str = str(correct_choice).strip()
-        if choice_str.isdigit():
-            idx = int(choice_str)
-        else:
-            letter_match = re.fullmatch(r"[A-Za-z]", choice_str)
-            if letter_match:
-                idx = ord(choice_str.upper()) - ord("A")
-            else:
-                return ""
-
-    if 0 <= idx < len(candidates):
-        return str(candidates[idx])
-    return ""
 
 def PULS(llm, prompt, openai_key=None):
 
@@ -112,12 +92,9 @@ def main(cfg: DictConfig):
 
         prompt = entry["question"].split("Question:")[-1].strip()
         candidates = entry.get("candidates", [])
-        correct_choice = entry.get("correct_choice")
-        correct_answer_text = resolve_correct_answer_text(candidates, correct_choice)
-        if correct_answer_text:
-            prompt = prompt + "\n Correct Answer: " + correct_answer_text
-        else:
-            prompt = prompt + "\n Correct Answer Index (0-based): " + str(correct_choice)
+        prompt = prompt + "\n Options: \n" + "\n".join([f"{idx}. {opt}" for idx, opt in enumerate(candidates)])
+        prompt = prompt + "\n Correct Answer Index: " + str(entry.get("correct_choice"))
+
         print("Question: ", prompt)
         try:    
             output = PULS(llm, prompt)
