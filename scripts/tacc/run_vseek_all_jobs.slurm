@@ -53,8 +53,10 @@ PROJECT_DIR="${PROJECT_ROOT}/src/vseek"
 CONFIG_PATH="${PROJECT_DIR}/config"
 MODEL_PATH="Qwen/Qwen3-VL-4B-Thinking"
 PROJECT_NAME="vseek"
-EXPERIMENT_NAME="qwen3-4bt_vl_lvbvmmelvbench-emreward-vllm-wtool-tagsummary-noklentr"
+EXPERIMENT_NAME="qwen3-4bt_vl_lvbvmmemlvu-pulsreward-vllm-wtool-tagsummary"
 CHECKPOINT_DIR="/work/11123/harshgoel99/vista/checkpoints"
+REWARD_TYPE="puls" # puls or em
+PULS_THRESHOLD=0.14
 
 WRAPPER_SCRIPT="${PROJECT_ROOT}/scripts/tacc/ray_wrapper.sh"
 if [ ! -f "$WRAPPER_SCRIPT" ]; then
@@ -137,7 +139,7 @@ for ((i = 1; i <= NUM_WORKERS; i++)); do
     # Note: We explicitly source bashrc/conda again to ensure the non-interactive srun shell has the env.
     srun --nodes=1 --ntasks=1 -w $node_i \
         bash -c "source ~/.bashrc && conda activate vseek-vllm4 && \
-                ~/ray_wrapper.sh ray start --address $HEAD_IP:$RAY_PORT --num-gpus=1 --num-cpus=8 --block" &
+                $WRAPPER_SCRIPT ray start --address $HEAD_IP:$RAY_PORT --num-gpus=1 --num-cpus=8 --block" &
     sleep 5
 done
 
@@ -252,6 +254,7 @@ export NCCL_IB_DISABLE=0              # Enable InfiniBand/RDMA
 export NCCL_NET_GDR_LEVEL=5           # Enable GPU Direct RDMA
 export NCCL_DEBUG=WARN       
 
+
 echo "Starting Training..."
 module load gcc/14.2.0 cuda/12.8
 # Note: We do NOT use srun here. The python script runs on the head node
@@ -260,8 +263,8 @@ python3 -m vseek.trainer.main_ppo \
     --config-path="$CONFIG_PATH" \
     --config-name='lvb_grpo' \
     algorithm.adv_estimator=grpo \
-    data.train_batch_size=128 \
-    data.val_batch_size=128 \
+    data.train_batch_size=64 \
+    data.val_batch_size=64 \
     data.max_prompt_length=2536 \
     data.max_response_length=5656 \
     data.filter_overlong_prompts=True \
@@ -276,31 +279,31 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.freeze_vision_tower=True \
     actor_rollout_ref.actor.clip_ratio_high=0.28 \
-    actor_rollout_ref.actor.kl_loss_coef=0.0 \
+    actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.rollout.temperature=0.7 \
-    actor_rollout_ref.actor.entropy_coeff=0.00 \
+    actor_rollout_ref.actor.entropy_coeff=0.0001 \
     actor_rollout_ref.actor.use_dynamic_bsz=False \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=65536 \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=64 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
     +ray_kwargs.ray_init.address="auto" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=4 \
     actor_rollout_ref.rollout.max_model_len=8192 \
     actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.free_cache_engine=True  \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.n=5 \
     actor_rollout_ref.rollout.multi_turn.format="hermes" \
     actor_rollout_ref.rollout.over_sample_rate=0.1 \
-    actor_rollout_ref.rollout.agent.num_workers=4 \
+    actor_rollout_ref.rollout.agent.num_workers=1 \
     actor_rollout_ref.rollout.mode=async \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=64 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \
@@ -316,6 +319,7 @@ python3 -m vseek.trainer.main_ppo \
     trainer.nnodes=$((SLURM_JOB_NUM_NODES)) \
     trainer.save_freq=40 \
     trainer.test_freq=40 \
+    trainer.max_actor_ckpt_to_keep=1 \
     data.train_files=/work/11123/harshgoel99/vista/vseek/tagsummary/train.parquet \
     data.val_files=/work/11123/harshgoel99/vista/vseek/tagsummary/test.parquet \
     actor_rollout_ref.rollout.multi_turn.tool_config_path="$TOOL_CONFIG_TMP" \
@@ -324,7 +328,9 @@ python3 -m vseek.trainer.main_ppo \
     trainer.total_epochs=50 \
     trainer.val_before_train=False \
     trainer.log_val_generations=20 \
-    custom_reward_function.path="${PROJECT_ROOT}/src/vseek/trainer/reward/vseekreward.py"
+    custom_reward_function.path="${PROJECT_ROOT}/src/vseek/trainer/reward/vseekreward.py" \
+    custom_reward_function.reward_kwargs.reward_type=$REWARD_TYPE \
+    custom_reward_function.reward_kwargs.puls_threshold=$PULS_THRESHOLD \
 
 
 # ==========================================
