@@ -4,10 +4,11 @@
 DEVICE=0
 MODEL="Qwen/Qwen3-VL-4B-Thinking"
 FRAMES=64
-OUTPUT_DIR="results/uniform_vllm"
-DATASETS="lvb videomme mlvu"
+OUTPUT_DIR="results/videorag_vllm"
+DATASETS="lvb mlvu videomme"
 PROMPT_TYPE="cot"
-SERVER_PORT=8002
+SERVER_PORT=8001
+TOPK=8
 TEMPERATURE=0.7
 # Parse command line arguments
 while [ $# -gt 0 ]; do
@@ -28,6 +29,10 @@ while [ $# -gt 0 ]; do
             OUTPUT_DIR="$2"
             shift 2
             ;;
+        --temperature)
+            TEMPERATURE="$2"
+            shift 2
+            ;;
         --datasets)
             shift
             DATASETS=""
@@ -46,20 +51,15 @@ while [ $# -gt 0 ]; do
             SERVER_PORT="$2"
             shift 2
             ;;
-        --temperature)
-            TEMPERATURE="$2"
-            shift 2
-            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo "Options:"
             echo "  -d, --device ID       GPU device ID (default: 0)"
-            echo "  -m, --model PATH      Model path or HF ID (default: Qwen/Qwen3-VL-4B-Thinking)"
+            echo "  -m, --model PATH      Model path or HF ID (default: Qwen/Qwen2.5-VL-7B-Instruct)"
             echo "  -f, --frames N        Max frames per turn (default: 64)"
-            echo "  -o, --output-dir DIR  Output directory (default: results/uniform_vllm)"
-            echo "  --vllm-port PORT      Port for vLLM server (default: 8002)"
-            echo "  --datasets NAMES      Space-separated list of datasets (default: lvb lvbench videomme)"
-            echo "  --prompt-type TYPE    Agent prompt type: base or cot (default: cot)"
+            echo "  -o, --output-dir DIR  Output directory (default: results/videorag_vllm)"
+            echo "  --vllm-port PORT      Port for vLLM server (default: 8001)"
+            echo "  --datasets NAMES      Space-separated list of datasets (default: lvb mlvu videomme)"
             exit 0
             ;;
         *)
@@ -76,21 +76,40 @@ export CUDA_DEVICE_ORDER="PCI_BUS_ID"
 export NCCL_P2P_DISABLE=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export VLLM_USE_V1=1
-
-# Global export to ensure vLLM and children see only this GPU as GPU 0
+# Ensure vLLM sees the specified GPU as GPU 0
+# Do NOT prefix with CUDA_VISIBLE_DEVICES=$DEVICE just for the command,
+# do it globally so children see it too, or ensure logic is sound.
+# If I export it globally:
 export CUDA_VISIBLE_DEVICES=$DEVICE
-MODEL_NAME=${MODEL##*/}
 
+# Then run vllm serve. vLLM will see strictly 1 GPU (logical 0).
+# So no need to pass GPU ID or list to vllm serve if tensor parallel is 1.
+
+
+echo "========================================================"
+echo "Running VideoRAG Agent Evaluation with VLLM"
+echo "Device: $DEVICE"
+echo "Model: $MODEL"
+echo "Frames per turn: $FRAMES"
+echo "Output Dir: $OUTPUT_DIR"
+echo "Datasets: $DATASETS"
+echo "Prompt Type: $PROMPT_TYPE"
+echo "Server Port: $SERVER_PORT"
+echo "========================================================"
+
+
+MODEL_NAME=${MODEL##*/}
 for DATASET in $DATASETS; do
     echo "Processing dataset: $DATASET"
     
-    # Construct specific output dir for this run configuration
     RUN_OUTPUT_DIR="${OUTPUT_DIR}/${DATASET}/${PROMPT_TYPE}/f${FRAMES}/${MODEL_NAME}"
     
     echo "Running command..."
-    # CUDA_VISIBLE_DEVICES is already exported globally
+    # Note: run_uniform_agent_data.py will now use the server via VideoRAGAgent
+    # We pass +agent_type=videorag and point to local server
+    # CUDA_VISIBLE_DEVICES is already exported globally as $DEVICE
     python3 scripts/run_uniform_agent_data.py \
-        +agent_type=uniform \
+        +agent_type=videorag \
         inference.max_images_per_turn="$FRAMES" \
         +inference.agent_prompt_type="$PROMPT_TYPE" \
         llm.model="$MODEL" \
@@ -99,6 +118,7 @@ for DATASET in $DATASETS; do
         inference.max_output_tokens=8192 \
         inference.gpu_number="$DEVICE" \
         dataset.name="$DATASET" \
+        inference.topk="$TOPK" \
         +inference.passes=16 \
         inference.temperature="$TEMPERATURE" \
         +inference.batch_size=16

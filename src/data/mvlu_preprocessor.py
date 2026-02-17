@@ -27,7 +27,7 @@ import base64
 from verl.utils.hdfs_io import copy, makedirs
 from data.mlvu import MLVU
 from vseek.data.frame import VideoFrames
-from data.prompts.prompts import tagbased, openaitooluse, tagbasedsummary
+from data.prompts.prompts import tagbased, openaitooluse, tagbasedsummary, fanout
 
 
 def build_prompt(args, entry: dict) -> list[dict]:
@@ -51,6 +51,8 @@ def build_prompt(args, entry: dict) -> list[dict]:
         system_prompt = openaitooluse.system_prompt
     elif args.prompt_type == "tagsummary":
         system_prompt = tagbasedsummary.system_prompt
+    elif args.prompt_type == "fanout":
+        system_prompt = fanout.system_prompt
     else:
         raise ValueError(f"Invalid prompt type: {args.prompt_type}")
     

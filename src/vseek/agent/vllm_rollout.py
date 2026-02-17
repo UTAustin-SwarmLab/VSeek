@@ -367,33 +367,27 @@ class VSeekFanoutAgentLoop(VSeekTagAgentLoop):
                 frame_annotation = f"[Video frames {sorted_indices_text} of {total_frames} retrieved] "
 
             # Handle Images
+            valid_images = []
             if tool_response.image:
                 images_list = tool_response.image if isinstance(tool_response.image, list) else [tool_response.image]
+                valid_images = [img for img in images_list if img is not None]
                 
                 # Pair images with their indices
                 # If indices are missing/mismatched, we preserve relative order using a large offset + i
-                for j, img in enumerate(images_list):
-                    if img is not None:
-                        idx = frame_indices[j] if j < len(frame_indices) else (999999 + i * 100 + j)
-                        all_collected_frames.append((idx, img))
+                for j, img in enumerate(valid_images):
+                    idx = frame_indices[j] if j < len(frame_indices) else (999999 + i * 100 + j)
+                    all_collected_frames.append((idx, img))
 
             # Handle Video (Error)
             if tool_response.video:
                 logger.warning("Multimedia type 'video' is not currently supported.")
                 raise NotImplementedError("Multimedia type 'video' is not currently supported.")
 
-            # Construct Message content for history (Text only, images are handled globally)
-            # We add placeholders for where images *would* be if we weren't aggregating them globally,
-            # or we just rely on the global image list being attached to the prompt.
-            # In this architecture, we treat the text response as a log of what was found.
+            # Construct message content for history as text-only.
+            # We add image placeholders once globally (after sorting) so placeholder count
+            # always matches the exact image list passed to the processor.
             content: list[dict[str, Any]] = []
-            
-            # Add placeholders for structure (optional, depends on model training, 
-            # here we assume the VLM just attends to the list of images provided in input)
-            if tool_response.image:
-                 for _ in range(len(tool_response.image) if isinstance(tool_response.image, list) else 1):
-                    content.append({"type": "image"})
-            
+
             response_text = frame_annotation + (tool_response.text or "")
             if response_text:
                 content.append({"type": "text", "text": response_text})
@@ -406,8 +400,25 @@ class VSeekFanoutAgentLoop(VSeekTagAgentLoop):
 
         # 3. Sort frames by time (frame_index)
         # This ensures the model sees the visual narrative in correct order
+        # Remove duplicates collected frames
+
         all_collected_frames.sort(key=lambda x: x[0])
-        sorted_images = [img for _, img in all_collected_frames]
+        idx_set = set()
+        sorted_images = []
+        for idx, img in all_collected_frames:
+            if idx not in idx_set:
+                idx_set.add(idx)
+                sorted_images.append(img)
+
+        print(f"sorted images: {idx_set}")
+        # Add one global image-only tool message so image placeholders align exactly.
+        if sorted_images:
+            add_messages.append(
+                {
+                    "role": "tool",
+                    "content": [{"type": "image"} for _ in sorted_images],
+                }
+            )
 
         # 4. Generate Response using the sorted images
         if self.processor is not None:

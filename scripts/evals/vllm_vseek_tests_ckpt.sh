@@ -1,30 +1,93 @@
 #!/bin/bash
 
-# Common parameters
+# ==========================================
+# Default Values (used if flags are not provided)
+# ==========================================
 BATCH_SIZE=32
 TOPK=4
-MODEL_PATH="checkpoints/vseek/qwen3-4bt_vl_lvb-emreward-vllm-wtool-tag-v2/global_step_400/actor/huggingface/"
-OUTPUT_BASE="./results/window_8_topk_4_vllm_q3_4bt/"
+MODEL_PATH="Qwen/Qwen3-VL-4B-Thinking"
+# MODEL_PATH="checkpoints/vseek/qwen3-4bt_vl_all-pulsreward-vllm-wtool-tagsummary/global_step_760/actor/huggingface"
+# MODEL_PATH="checkpoints/vseek/qwen3-4bt_vl_all-emreward-vllm-wtool-tagsummary/global_step_680/actor/huggingface"
+MODEL_PATH="Qwen/Qwen3-VL-4B-Thinking"
+
+OUTPUT_BASE="./results/vseek/Qwen3-VL-4B-Thinking"
+# OUTPUT_BASE="./results/vseek/VSeek-Puls"
+# OUTPUT_BASE="./results/vseek/VSeek-EM"
+OUTPUT_BASE="./results/vseek/Qwen3-VL-4B-Thinking-Fanout"
+
+PROMPT_TYPE="tagsummary"      # tag, tagsummary
+AGENT_TYPE="tagsummary"  # tag, tagsummary, fanout
+PASSES=16               # Default
+DEVICES="1"
+# ==========================================
+# Argument Parsing Logic
+# ==========================================
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --prompt-type) PROMPT_TYPE="$2"; shift ;;
+        --agent-type)  AGENT_TYPE="$2"; shift ;;
+        --passes)      PASSES="$2"; shift ;;
+        --batch-size)  BATCH_SIZE="$2"; shift ;;
+        --model-path)  MODEL_PATH="$2"; shift ;;
+        --devices)     DEVICES="$2"; shift ;;
+        -h|--help)
+            echo "Usage: $0 [options]"
+            echo "Options:"
+            echo "  --prompt-type <str>   (default: tagsummary)"
+            echo "  --agent-type <str>    (default: tagsummary)"
+            echo "  --passes <int>        (default: 16)"
+            echo "  --batch-size <int>    (default: 32)"
+            exit 0
+            ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
+
+echo "==================================="
+echo "Starting Run with Configuration:"
+echo "Prompt Type : $PROMPT_TYPE"
+echo "Agent Type  : $AGENT_TYPE"
+echo "Passes      : $PASSES"
+echo "Model Path  : $MODEL_PATH"
+echo "==================================="
+
+# ==========================================
+# Main Execution Loop
+# ==========================================
 
 # Datasets to process
 # Format: "DatasetName|ParquetPath|OutputPrefix"
 DATASETS=(
-    "LVBench|/nas/mars/dataset/LVBench/window_8/tag|lvbench"
-    "Video-MME|/nas/mars/dataset/Video-MME/window_8/tag|videomme"
-    "LVB|/nas/mars/dataset/longvideobench/window_8/tag|lvb"
+    "Video-MME|/nas/mars/dataset/Video-MME/window_8/|videomme"
+    "LVB|/nas/mars/dataset/longvideobench/window_8/|lvb"
 )
+# DATASETS=(
+#     "LVB|/nas/mars/dataset/longvideobench/window_8/|lvb"
+# )
 
 for entry in "${DATASETS[@]}"; do
     IFS="|" read -r name parquet_path prefix <<< "$entry"
     
     echo "Running evaluation for $name..."
+    export CUDA_VISIBLE_DEVICES="$DEVICES"
+    if [ "$name" == "LVB" ]; then
+        MAX_PROMPT_LENGTH=2536
+    else
+        MAX_PROMPT_LENGTH=2048
+    fi
+    # Note: Ensure the python flags (--prompt_type, etc.) match exactly what your python script expects
     python3 scripts/run_agent_data_vllmrollout.py \
         --parquet "$parquet_path" \
         --batch_size "$BATCH_SIZE" \
         --output_dir "$OUTPUT_BASE" \
         --topk "$TOPK" \
         --local_model_path="$MODEL_PATH" \
-        --output_prefix "$prefix"
+        --output_prefix "$prefix" \
+        --prompt_type "$PROMPT_TYPE" \
+        --agent_type "$AGENT_TYPE" \
+        --passes "$PASSES" \
+        --max_prompt_length "$MAX_PROMPT_LENGTH" \
         
     echo "Finished $name"
     echo "-----------------------------------"

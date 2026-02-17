@@ -18,7 +18,7 @@ from vseek.data.frame import VideoFrames
 import cv2
 import base64
 import traceback
-from data.prompts.prompts import tagbased, openaitooluse, tagbasedsummary
+from data.prompts.prompts import tagbased, openaitooluse, tagbasedsummary, fanout
 from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict
 
@@ -43,6 +43,8 @@ def build_prompt(args, entry: dict) -> list[dict]:
         system_prompt = openaitooluse.system_prompt
     elif args.prompt_type == "tagsummary":
         system_prompt = tagbasedsummary.system_prompt
+    elif args.prompt_type == "fanout":
+        system_prompt = fanout.system_prompt
     else:
         raise ValueError(f"Invalid prompt type: {args.prompt_type}")
     

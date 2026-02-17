@@ -9,7 +9,7 @@ Exports two namespaces:
 from .tagbased import system_prompt as tagbased_system_prompt
 from .openaitooluse import system_prompt as openaitooluse_system_prompt
 from .tagbasedsummary import system_prompt as tagbasedsummary_system_prompt
-
+from .fanout import system_prompt as fanout_system_prompt
 # class _TagBased:
 #     # Tag-based agent: language search via <search>, subtitle search via <search_subtitle>
 #     system_prompt: str = (
@@ -109,11 +109,15 @@ class _TagBasedSummary:
     # Tag-based agent: language search via <search>, subtitle search via <search_subtitle>
     system_prompt: str = tagbasedsummary_system_prompt
 
+class _FanOut:
+    # Fan-out agent: fan-out search via <search>, subtitle search via <search_subtitle>
+    system_prompt: str = fanout_system_prompt
 
 tagbased = _TagBased()
 openaitooluse = _OpenAIToolUse()
 tagbasedsummary = _TagBasedSummary()
+fanout = _FanOut()
 
-__all__ = ["tagbased", "openaitooluse", "tagbasedsummary"]
+__all__ = ["tagbased", "openaitooluse", "tagbasedsummary", "fanout"]
 
 
