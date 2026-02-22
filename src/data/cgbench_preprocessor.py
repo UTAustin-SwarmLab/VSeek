@@ -99,14 +99,15 @@ if __name__ == "__main__":
     for idx, entry in enumerate(raw_entries):
         video_id = entry.get("metadata", {}).get("video_id")
         entries_by_video[video_id].append((idx, entry))
-
+    
+    print(f"Grouped {len(raw_entries)} entries into {len(entries_by_video)} unique videos")
     def _process_video_group(video_group):
         video_id, idx_entries = video_group
         rows = []
-
+        print(f"Processing video {video_id} with {len(idx_entries)} entries")
         video_data_cache = None
         if data_root is not None:
-            vf_path = os.path.join(data_root, f"{video_id}.pkl")
+            vf_path = os.path.join(data_root, f"{video_id}")
             if os.path.exists(vf_path):
                 try:
                     video_frames = VideoFrames.load(vf_path)

@@ -127,9 +127,9 @@ class VideoMME(Manager):
         """
         category_buckets = defaultdict(list)
         
-        if os.path.exists(os.path.join(self._dataset_path, "puls.json")):
-            print(f"Loading Video-MME dataset from {os.path.join(self._dataset_path, 'puls.json')}")
-            with open(os.path.join(self._dataset_path, "puls.json"), "r") as f:
+        if os.path.exists(os.path.join(self._dataset_path, "puls_refined.json")):
+            print(f"Loading Video-MME dataset from {os.path.join(self._dataset_path, 'puls_refined.json')}")
+            with open(os.path.join(self._dataset_path, "puls_refined.json"), "r") as f:
                 dataset = json.load(f)
             return dataset
         else:

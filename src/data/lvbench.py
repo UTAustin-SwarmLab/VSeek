@@ -80,9 +80,9 @@ class LVBench(Manager):
         #             "2. Local JSON file at {}/lvbench_test.json".format(self._dataset_path)
         #         )
         
-        if os.path.exists(os.path.join(self._dataset_path, "puls.json")):
-            print(f"Loading LVBench dataset from {os.path.join(self._dataset_path, 'puls.json')}")
-            with open(os.path.join(self._dataset_path, "puls.json"), "r") as f:
+        if os.path.exists(os.path.join(self._dataset_path, "puls_refined.json")):
+            print(f"Loading LVBench dataset from {os.path.join(self._dataset_path, 'puls_refined.json')}")
+            with open(os.path.join(self._dataset_path, "puls_refined.json"), "r") as f:
                 dataset = json.load(f)
             return dataset
         else:

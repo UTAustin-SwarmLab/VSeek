@@ -72,12 +72,14 @@ class CGBench(Manager):
         self._video_index = None
 
     def _load_annotations(self) -> list[dict]:
-        explicit_candidates = [
-            os.path.join(self._dataset_path, "puls.json"),
-            os.path.join(self._dataset_path, "cgbench_mini.json"),
+        explicit_candidates = {
+            0:os.path.join(self._dataset_path, "puls_refined.json"),
+            1:os.path.join(self._dataset_path, "puls_new.json"),
+            2:os.path.join(self._dataset_path, "cgbench_mini.json"),
 
-        ]
-        for candidate in explicit_candidates:
+        }
+        sorted_candidates = sorted(explicit_candidates.items(), key=lambda x: x[0])
+        for idx,candidate in sorted_candidates:
             if os.path.exists(candidate):
                 with open(candidate, "r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -124,8 +126,9 @@ class CGBench(Manager):
 
     def load_data(self):
         raw_data = self._load_annotations()
-        if isinstance(raw_data, list) and raw_data and "prompt" in raw_data[0]:
+        if isinstance(raw_data, list) and raw_data:
             # Already normalized puls format
+            print(f"Loading CGBench dataset from {len(raw_data)} items")
             return raw_data
 
         category_buckets = defaultdict(list)

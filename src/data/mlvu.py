@@ -141,9 +141,9 @@ class MLVU(Manager):
         mlvu_dataset = self.merge_category_files()
         print(f"Loading MLVU dataset from {self._dataset_path}...")
         
-        if os.path.exists(os.path.join(self._dataset_path, "puls.json")):
-            print(f"Loading MLVU dataset from {os.path.join(self._dataset_path, 'puls.json')}")
-            with open(os.path.join(self._dataset_path, "puls.json"), "r") as f:
+        if os.path.exists(os.path.join(self._dataset_path, "puls_refined.json")):
+            print(f"Loading MLVU dataset from {os.path.join(self._dataset_path, 'puls_refined.json')}")
+            with open(os.path.join(self._dataset_path, "puls_refined.json"), "r") as f:
                 dataset = json.load(f)
             return dataset
         else:
