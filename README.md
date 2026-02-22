@@ -207,6 +207,7 @@ python3 scripts/utils/burn_subtitles.py --json-file videomme/videomme_val.json -
     retriever.index_path=/home/hg22723/vseek/dataset \
     retriever.gpu_number=0
 ```
+
 ```bash
  python3 src/vseek/puls/primitives.py dataset.name='videomme'
 ```
@@ -257,9 +258,45 @@ bash scripts/data_ops/preprocess_mlvu.sh \
     --prompt_type tagsummary
 
 # Option 2: Use the convenience script
-bash scripts/preprocess_mvlu.sh
+bash scripts/preprocess_mvlu.sh tagsummary
 ```
 
+### CGBench
+
+
+#### Unzip Videos and convert parquet
+```bash
+SUBTITLE_DIR=/nas/mars/dataset/CGBench CHUNKS_DIR=/nas/mars/dataset/CGBench OUTPUT_DIR=/nas/mars/dataset/CGBench/videos bash scripts/utils/unzip_videos.sh
+```
+
+#### Burn Subtitles
+
+```bash
+python3 scripts/utils/burn_subtitles.py --json-file cgbench_mini.json --output-dir /nas/mars/dataset/CGBench/burn-subtitles --data-folder /nas/mars/dataset/CGBench
+
+
+### Run indexing pipeline
+```bash
+    python3 scripts/data_ops/run_data_pipeline.py \
+    dataset.name=cgbench \
+    retriever.window_size=8 \
+    dataset.videomme.dataset_path=/nas/mars/dataset/CGBench/ \
+    dataset.videomme.burned_path=/nas/mars/dataset/CGBench/burn-subtitles/ \
+    retriever.index_path=/home/hg22723/vseek/dataset \
+    retriever.gpu_number=7
+```
+
+
+```bash
+bash scripts/data_ops/preprocess_cgbench.sh \
+    --local_dataset_path "/nas/mars/dataset/CGBench" \
+    --burned_path "/nas/mars/dataset/CGBench/burn-subtitles" \
+    --train_ratio 0.8 \
+    --local_save_dir /nas/mars/dataset/CGBench \
+    --index_path /home/hg22723/vseek/dataset \
+    --window_size 8 \
+    --prompt_type tagsummary
+```
 
 
 
@@ -350,3 +387,8 @@ make
 cd python
 python setup.py install
 
+
+
+### Puls related fix
+
+python "/home/hg22723/projects/VSeek-R1/src/vseek/puls/test/evaluate_puls_with_gpt.py" --input_json "/nas/mars/dataset/MLVU/MLVU/puls.json" --output_jsonl "/home/hg22723/projects/VSeek-R1/tmp/mlvu_puls_eval_smoke.jsonl" --summary_json "/home/hg22723/projects/VSeek-R1/tmp/mlvu_puls_eval_smoke_summary.json" --model gpt-4o --max_samples 200 --seed 42
