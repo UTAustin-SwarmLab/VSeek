@@ -2,6 +2,7 @@ import argparse
 import json
 import random
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -44,19 +45,19 @@ specification: {json.dumps(specification, ensure_ascii=True)}
 
 ### Evaluation criteria (score each from 0 to 2)
 1) Inclusion of all potential subjects and events
-   - 2: Includes all key subjects/events needed to answer correctly; no critical missing item.
-   - 1: Mostly complete but missing at least one non-trivial subject/event.
-   - 0: Misses multiple key subjects/events or is largely irrelevant.
+   - 2: Includes all key subjects/events needed to answer correctly; no critical missing item. DOes not include distractor or incorrect options within the questions
+   - 1: Mostly complete but missing at least one non-trivial subject/event. Includes distractor or incorrect options within the questions
+   - 0: Misses multiple key subjects/events or is largely irrelevant. Includes distractor or incorrect options within the questions
 
 2) Temporal alignment of subjects/events
-   - 2: The ordering/temporal relationship among events matches the question and correct answer.
-   - 1: Partially aligned; one notable temporal mismatch or ambiguity.
-   - 0: Temporal relationships are wrong or unsupported by the QA.
+   - 2: The ordering/temporal relationship among events matches the question and correct answer. Does not include distractor or incorrect options within the questions
+   - 1: Partially aligned; one notable temporal mismatch or ambiguity. Includes distractor or incorrect options within the questions
+   - 0: Temporal relationships are wrong or unsupported by the QA. Includes distractor or incorrect options within the questions
 
 3) Correct temporal operators between subjects and events
-   - 2: Operators (AND/OR/NOT/UNTIL or symbolic equivalents) are appropriate and logically consistent.
-   - 1: Minor operator issue but mostly acceptable.
-   - 0: Operator usage is incorrect, contradictory, or invalid.
+   - 2: Operators (AND/OR/NOT/UNTIL or symbolic equivalents) are appropriate and logically consistent. Does not include distractor or incorrect options within the questions
+   - 1: Minor operator issue but mostly acceptable. Includes distractor or incorrect options within the questions
+   - 0: Operator usage is incorrect, contradictory, or invalid. Includes distractor or incorrect options within the questions
 
 Important rules:
 - Judge only against the QA sample and correct answer.
@@ -245,6 +246,30 @@ def aggregate(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def build_record(idx: int, entry: dict[str, Any], judge: dict[str, Any] | None = None, judge_error: str | None = None) -> dict[str, Any]:
+    record = {
+        "index": idx,
+        "question": sanitize_entry_question(entry.get("question", "")),
+        "options": entry.get("candidates", []),
+        "correct_choice": entry.get("correct_choice"),
+        "puls": entry.get("puls", {}),
+    }
+    if judge is not None:
+        record["judge"] = judge
+    if judge_error is not None:
+        record["judge_error"] = judge_error
+    return record
+
+
+def evaluate_single_task(model: str, idx: int, entry: dict[str, Any]) -> dict[str, Any]:
+    client = OpenAI()
+    try:
+        judge = evaluate_single_entry(client, model, entry)
+        return build_record(idx=idx, entry=entry, judge=judge)
+    except Exception as exc:
+        return build_record(idx=idx, entry=entry, judge_error=str(exc))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Evaluate PULS proposition/specification quality with GPT."
@@ -270,6 +295,12 @@ def main() -> None:
         help="Optional random sample size from input set.",
     )
     parser.add_argument("--seed", default=42, type=int, help="Seed for random sampling.")
+    parser.add_argument(
+        "--num_workers",
+        default=8,
+        type=int,
+        help="Number of parallel workers for GPT evaluation.",
+    )
     args = parser.parse_args()
 
     input_path = Path(args.input_json)
@@ -283,27 +314,21 @@ def main() -> None:
     selected_indices = sample_indices(len(entries), args.max_samples, args.seed)
     selected_entries = [(idx, entries[idx]) for idx in selected_indices]
 
-    client = OpenAI()
+    num_workers = max(1, int(args.num_workers))
     records: list[dict[str, Any]] = []
 
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        future_to_index = {
+            executor.submit(evaluate_single_task, args.model, idx, entry): idx
+            for idx, entry in selected_entries
+        }
+        for future in tqdm(as_completed(future_to_index), total=len(future_to_index), desc="GPT evaluating PULS"):
+            records.append(future.result())
+
+    records.sort(key=lambda r: r["index"])
+
     with output_path.open("w", encoding="utf-8") as fout:
-        for idx, entry in tqdm(selected_entries, desc="GPT evaluating PULS"):
-            try:
-                judge = evaluate_single_entry(client, args.model, entry)
-                record = {
-                    "index": idx,
-                    "question": sanitize_entry_question(entry.get("question", "")),
-                    "puls": entry.get("puls", {}),
-                    "judge": judge,
-                }
-            except Exception as exc:
-                record = {
-                    "index": idx,
-                    "question": sanitize_entry_question(entry.get("question", "")),
-                    "puls": entry.get("puls", {}),
-                    "judge_error": str(exc),
-                }
-            records.append(record)
+        for record in records:
             fout.write(json.dumps(record, ensure_ascii=True) + "\n")
 
     valid_records = [r for r in records if "judge" in r]
