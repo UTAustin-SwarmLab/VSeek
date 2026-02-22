@@ -19,6 +19,7 @@ def find_prompt(prompt):
     - Keep proposition text concise and directly usable in logic.
     - If subtitle/caption content is referenced, use: subtitle_'<exact text>'
       (no extra words like appears/says/mentions).
+    - You must only use the correct answer text as the source of truth for the propositions. Do not use other distractor options.
 
     Stage 2: Specification Generation
     Generate one specification using ONLY propositions from Stage 1.

@@ -10,6 +10,7 @@ from data.lvb import LongVideoBench
 from data.lvbench import LVBench
 from data.videomme import VideoMME
 from data.mlvu import MLVU
+from data.cgbench import CGBench
 from concurrent.futures import ThreadPoolExecutor
 
 def clean_and_parse_json(raw_str):
@@ -103,6 +104,8 @@ def main(cfg: DictConfig):
         dataset = VideoMME(cfg)
     elif cfg.dataset.name == "mlvu":
         dataset = MLVU(cfg)      
+    elif cfg.dataset.name == "cgbench":
+        dataset = CGBench(cfg)
 
     openai_key = os.getenv("OPENAI_API_KEY")
 
@@ -140,7 +143,7 @@ def main(cfg: DictConfig):
             desc="Processing videos"
         ))
     
-    with open(os.path.join(dataset._dataset_path, "puls.json"), "w") as f:
+    with open(os.path.join(dataset._dataset_path, "puls_new.json"), "w") as f:
         json.dump(group_results, f, indent=4)
 
 if __name__ == "__main__":
