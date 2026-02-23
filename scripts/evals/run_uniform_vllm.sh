@@ -81,6 +81,7 @@ export VLLM_USE_V1=1
 # Global export to ensure vLLM and children see only this GPU as GPU 0
 export CUDA_VISIBLE_DEVICES=$DEVICE
 MODEL_NAME=${MODEL##*/}
+RUN_TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 # notify.py "Starting experiment $MODEL on $DEVICE with datasets $DATASETS"
 
@@ -90,10 +91,10 @@ for DATASET in $DATASETS; do
     # Construct specific output dir for this run configuration
     RUN_OUTPUT_DIR="${OUTPUT_DIR}/${DATASET}/${PROMPT_TYPE}/f${FRAMES}/${MODEL_NAME}"
     mkdir -p "$RUN_OUTPUT_DIR"
-    RUN_LOG_FILE="${RUN_OUTPUT_DIR}/run.log"
+    RUN_LOG_FILE="${RUN_OUTPUT_DIR}/run_${RUN_TIMESTAMP}.log"
     
     echo "Running command..."
-    echo "Appending output to $RUN_LOG_FILE"
+    echo "Writing output to $RUN_LOG_FILE"
     # CUDA_VISIBLE_DEVICES is already exported globally
     python3 scripts/run_uniform_agent_data.py \
         +agent_type=uniform \
@@ -108,7 +109,7 @@ for DATASET in $DATASETS; do
         +inference.passes=16 \
         inference.temperature="$TEMPERATURE" \
         +inference.batch_size=16 \
-        2>&1 | tee -a "$RUN_LOG_FILE"
+        2>&1 | tee "$RUN_LOG_FILE"
         
     echo "Finished $DATASET"
     echo "--------------------------------------------------------"
@@ -116,4 +117,4 @@ done
 
 echo "All evaluations completed."
 
-# notify.py "Experiment $MODEL on $DEVICE completed with datasets $DATASETS"
+notify.py "Experiment $MODEL on $DEVICE completed with datasets $DATASETS"
