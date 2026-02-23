@@ -2,10 +2,11 @@
 
 # Default values
 DEVICE=0
-MODEL="Qwen/Qwen3-VL-4B-Thinking"
+# MODEL="Qwen/Qwen3-VL-4B-Thinking"
+MODEL="OpenGVLab/InternVL3_5-4B-HF"
 FRAMES=64
 OUTPUT_DIR="results/uniform_vllm"
-DATASETS="lvb videomme mlvu"
+DATASETS="lvb"
 PROMPT_TYPE="cot"
 SERVER_PORT=8002
 TEMPERATURE=0.7
@@ -81,13 +82,18 @@ export VLLM_USE_V1=1
 export CUDA_VISIBLE_DEVICES=$DEVICE
 MODEL_NAME=${MODEL##*/}
 
+# notify.py "Starting experiment $MODEL on $DEVICE with datasets $DATASETS"
+
 for DATASET in $DATASETS; do
     echo "Processing dataset: $DATASET"
     
     # Construct specific output dir for this run configuration
     RUN_OUTPUT_DIR="${OUTPUT_DIR}/${DATASET}/${PROMPT_TYPE}/f${FRAMES}/${MODEL_NAME}"
+    mkdir -p "$RUN_OUTPUT_DIR"
+    RUN_LOG_FILE="${RUN_OUTPUT_DIR}/run.log"
     
     echo "Running command..."
+    echo "Appending output to $RUN_LOG_FILE"
     # CUDA_VISIBLE_DEVICES is already exported globally
     python3 scripts/run_uniform_agent_data.py \
         +agent_type=uniform \
@@ -101,10 +107,13 @@ for DATASET in $DATASETS; do
         dataset.name="$DATASET" \
         +inference.passes=16 \
         inference.temperature="$TEMPERATURE" \
-        +inference.batch_size=16
+        +inference.batch_size=16 \
+        2>&1 | tee -a "$RUN_LOG_FILE"
         
     echo "Finished $DATASET"
     echo "--------------------------------------------------------"
 done
 
 echo "All evaluations completed."
+
+# notify.py "Experiment $MODEL on $DEVICE completed with datasets $DATASETS"
