@@ -20,7 +20,7 @@ fi
 conda activate vseek-vllm4
 
 # 3. Export Common Variables (Fallback)
-export HF_HOME="${WORK}/huggingface"
+export HF_HOME="${SCRATCH}/huggingface"
 export HF_HUB_CACHE="${HF_HOME}/hub"
 export TRANSFORMERS_CACHE="${HF_HOME}/hub"
 
