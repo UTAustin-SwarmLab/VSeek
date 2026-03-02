@@ -2,7 +2,8 @@
 
 # Default values
 DEVICE=0
-MODEL="Qwen/Qwen3-VL-4B-Thinking"
+# MODEL="Qwen/Qwen3-VL-4B-Thinking"
+MODEL="OpenGVLab/InternVL3_5-4B-HF"
 FRAMES=64
 OUTPUT_DIR="results/uniform_vllm"
 DATASETS="lvb videomme mlvu lvbench"
@@ -88,12 +89,17 @@ export VLLM_USE_V1=1
 # Global export to ensure vLLM and children see only this GPU as GPU 0
 export CUDA_VISIBLE_DEVICES=$DEVICE
 MODEL_NAME=${MODEL##*/}
+RUN_TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+
+# notify.py "Starting experiment $MODEL on $DEVICE with datasets $DATASETS"
 
 for DATASET in $DATASETS; do
     echo "Processing dataset: $DATASET"
     
     # Construct specific output dir for this run configuration
     RUN_OUTPUT_DIR="${OUTPUT_DIR}/${DATASET}/${PROMPT_TYPE}/f${FRAMES}/${MODEL_NAME}"
+    mkdir -p "$RUN_OUTPUT_DIR"
+    RUN_LOG_FILE="${RUN_OUTPUT_DIR}/run_${RUN_TIMESTAMP}.log"
     
     echo "Running command..."
     mm_cache_restarts=0
@@ -164,3 +170,5 @@ for DATASET in $DATASETS; do
 done
 
 echo "All evaluations completed."
+
+notify.py "Experiment $MODEL on $DEVICE completed with datasets $DATASETS"

@@ -26,7 +26,23 @@ class LocalVLLMBase:
         self.thinking_enabled = getattr(config.inference, "thinking_enabled", True)
         # Processor and LLM
         self.processor = AutoProcessor.from_pretrained(self.model_path, trust_remote_code=True)
-        
+
+        # mm_processor_kwargs: InternVL3.5's video processor defaults to 384x384 but
+        # the model expects 448x448. Use size override for InternVL; others use max_pixels.
+        if "InternVL" in str(self.model_path):
+            mm_processor_kwargs = {
+                "size": {"height": 448, "width": 448},
+                "crop_size": {"height": 448, "width": 448},
+                "nframes": int(self.max_images),
+                "fps": 1,
+            }
+        else:
+            mm_processor_kwargs = {
+                "max_pixels": int(self.max_image_width) * int(self.max_image_height),
+                "nframes": int(self.max_images),
+                "fps": 1,
+            }
+
         engine_args = AsyncEngineArgs(
             model=self.model_path,
             tensor_parallel_size=1,
