@@ -9,7 +9,7 @@
 #SBATCH -t 48:00:00
 #SBATCH --mem=0
 
-# USAGE: sbatch run_vseek_job.slurm
+# USAGE: sbatch run_vseek_all_jobs.slurm [em|puls]
 
 echo "Starting job on $(hostname)"
 date
@@ -21,7 +21,7 @@ date
 export MASTER_PORT=${MASTER_PORT:-29651}
 export CUDA_LAUNCH_BLOCKING=1
 export VLLM_USE_V1=1
-export RAY_memory_usage_threshold=0.98
+export RAY_memory_usage_threshold=0.95
 
 export RAY_PORT=6379
 export RAY_DASHBOARD_PORT=8265
@@ -41,7 +41,7 @@ conda activate vseek-vllm4
 echo "Conda environment: $CONDA_DEFAULT_ENV"
 
 # HuggingFace Cache
-export HF_HOME="${WORK}/huggingface"
+export HF_HOME="${SCRATCH}/huggingface"
 export HF_HUB_CACHE="${HF_HOME}/hub"
 export TRANSFORMERS_CACHE="${HF_HOME}/hub"
 mkdir -p "$HF_HOME"
@@ -53,9 +53,17 @@ PROJECT_DIR="${PROJECT_ROOT}/src/vseek"
 CONFIG_PATH="${PROJECT_DIR}/config"
 MODEL_PATH="Qwen/Qwen3-VL-4B-Thinking"
 PROJECT_NAME="vseek"
-EXPERIMENT_NAME="qwen3-4bt_vl_lvbvmmemlvu-pulsreward-vllm-wtool-tagsummary"
-CHECKPOINT_DIR="/work/11123/harshgoel99/vista/checkpoints"
-REWARD_TYPE="puls" # puls or em
+TRAIN_DATA_PATH="${SCRATCH}/vseek/tagsummary/train.parquet"
+VAL_DATA_PATH="${SCRATCH}/vseek/tagsummary/test.parquet"
+# CHECKPOINT_DIR="/work/11123/harshgoel99/vista/checkpoints"
+CHECKPOINT_DIR="${SCRATCH}/checkpoints"
+REWARD_TYPE="${1:-em}" # Accept from sbatch script arg: em or puls
+if [[ "$REWARD_TYPE" != "em" && "$REWARD_TYPE" != "puls" ]]; then
+    echo "Error: REWARD_TYPE must be 'em' or 'puls', got '$REWARD_TYPE'"
+    exit 1
+fi
+echo "Using REWARD_TYPE=$REWARD_TYPE"
+EXPERIMENT_NAME="qwen3-4bt_vl_lvbvmmemlvu-${REWARD_TYPE}reward-vllm-wtool-tagsummary"
 PULS_THRESHOLD=0.14
 
 WRAPPER_SCRIPT="${PROJECT_ROOT}/scripts/tacc/ray_wrapper.sh"
@@ -114,7 +122,7 @@ echo "----------------------------------------"
 # A. Start Ray Head (Local execution on the first node)
 # We do not use srun here because the batch script is already running on the head node.
 echo "Starting Ray Head on $HEAD_NODE..."
-"$WRAPPER_SCRIPT" ray start --head \
+numactl --cpunodebind=0 --membind=0 --physcpubind=0-71" $WRAPPER_SCRIPT" ray start --head \
     --node-ip-address="$HEAD_IP" \
     --port=$RAY_PORT \
     --dashboard-port=$RAY_DASHBOARD_PORT \
@@ -139,7 +147,7 @@ for ((i = 1; i <= NUM_WORKERS; i++)); do
     # Note: We explicitly source bashrc/conda again to ensure the non-interactive srun shell has the env.
     srun --nodes=1 --ntasks=1 -w $node_i \
         bash -c "source ~/.bashrc && conda activate vseek-vllm4 && \
-                $WRAPPER_SCRIPT ray start --address $HEAD_IP:$RAY_PORT --num-gpus=1 --num-cpus=8 --block" &
+                numactl --cpunodebind=0 --membind=0 --physcpubind=0-71 $WRAPPER_SCRIPT ray start --address $HEAD_IP:$RAY_PORT --num-gpus=1 --num-cpus=8 --block" &
     sleep 5
 done
 
@@ -284,7 +292,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.actor.entropy_coeff=0.0001 \
     actor_rollout_ref.actor.use_dynamic_bsz=False \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=65536 \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768 \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
@@ -292,6 +300,7 @@ python3 -m vseek.trainer.main_ppo \
     +ray_kwargs.ray_init.address="auto" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
+    actor_rollout_ref.rollout.max_num_seqs=64 \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=4 \
     actor_rollout_ref.rollout.max_model_len=8192 \
     actor_rollout_ref.rollout.name=vllm \
@@ -317,11 +326,11 @@ python3 -m vseek.trainer.main_ppo \
     trainer.default_local_dir="${CHECKPOINT_DIR}/${PROJECT_NAME}/${EXPERIMENT_NAME}" \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=$((SLURM_JOB_NUM_NODES)) \
-    trainer.save_freq=40 \
+    trainer.save_freq=10 \
     trainer.test_freq=40 \
-    trainer.max_actor_ckpt_to_keep=1 \
-    data.train_files=/work/11123/harshgoel99/vista/vseek/tagsummary/train.parquet \
-    data.val_files=/work/11123/harshgoel99/vista/vseek/tagsummary/test.parquet \
+    trainer.max_actor_ckpt_to_keep=2 \
+    data.train_files=$TRAIN_DATA_PATH \
+    data.val_files=$VAL_DATA_PATH \
     actor_rollout_ref.rollout.multi_turn.tool_config_path="$TOOL_CONFIG_TMP" \
     actor_rollout_ref.rollout.agent.agent_loop_config_path="${PROJECT_ROOT}/src/vseek/config/retriever/vllm_agent.yaml" \
     actor_rollout_ref.rollout.agent.default_agent_loop="vseek_tag_summary_agent" \

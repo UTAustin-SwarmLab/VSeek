@@ -64,6 +64,3 @@ custom_reward_function:
     score: {'em':1.0, 'puls': 0.5}
     reward_type: em
     puls_threshold: 0.15
-
-reward_model:
-  reward_manager: naive

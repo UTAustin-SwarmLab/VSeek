@@ -2,12 +2,12 @@
 retriever:
   port: 9000
   server_url: "http://127.0.0.1:${retriever.port}"
-  index_path: "/work/11123/harshgoel99/vista/vseek"
+  index_path: "/scratch/11123/harshgoel99/vseek"
   topk: 1
   retriever_name: "ViClip"
   retriever_model: "ViClip"
-  retrieval_model_path: "/work/11123/harshgoel99/vista/model_weights/viclip/ViClip-InternVid-10M-FLT.pth"
-  text_encoder_model_path: "/work/11123/harshgoel99/vista/model_weights/viclip/bpe_simple_vocab_16e6.txt.gz"
+  retrieval_model_path: "/scratch/11123/harshgoel99/model_weights/viclip/ViClip-InternVid-10M-FLT.pth"
+  text_encoder_model_path: "/scratch/11123/harshgoel99/model_weights/viclip/bpe_simple_vocab_16e6.txt.gz"
   gpu_number: 0
   faiss_gpu: false
   dataset_name: ${..dataset.name}
@@ -43,26 +43,26 @@ dataset:
   # Dataset-specific configurations
   lvb:
     name: "lvb"
-    dataset_path: "/work/11123/harshgoel99/vista/datasets/longvideobench/LongVideoBench/"
-    burned_path: "/work/11123/harshgoel99/vista/datasets/longvideobench/"
+    dataset_path: "/scratch/11123/harshgoel99/datasets/longvideobench/LongVideoBench/"
+    burned_path: "/scratch/11123/harshgoel99/datasets/longvideobench/"
     enabled: true
   
   lvbench:
     name: "lvbench"
-    dataset_path: "/work/11123/harshgoel99/vista/datasets/LVBench"
-    burned_path: "/work/11123/harshgoel99/vista/datasets/LVBench/videos"
+    dataset_path: "/scratch/11123/harshgoel99/datasets/LVBench"
+    burned_path: "/scratch/11123/harshgoel99/datasets/LVBench/videos"
     enabled: true
   
   videomme:
     name: "videomme"
-    dataset_path: "/work/11123/harshgoel99/vista/datasets/Video-MME"
-    burned_path: "/work/11123/harshgoel99/vista/datasets/Video-MME/burn-subtitles"
+    dataset_path: "/scratch/11123/harshgoel99/datasets/Video-MME"
+    burned_path: "/scratch/11123/harshgoel99/datasets/Video-MME/burn-subtitles"
     enabled: true
   
   mlvu:
     name: "mlvu"
-    dataset_path: "/work/11123/harshgoel99/vista/datasets/MLVU/MLVU"
-    burned_path: "/work/11123/harshgoel99/vista/datasets/MLVU/MLVU"
+    dataset_path: "/scratch/11123/harshgoel99/datasets/MLVU/MLVU"
+    burned_path: "/scratch/11123/harshgoel99/datasets/MLVU/MLVU"
     enabled: true
   
   
