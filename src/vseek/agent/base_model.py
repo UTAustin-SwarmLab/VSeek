@@ -35,7 +35,7 @@ class LocalVLLMBase:
             mm_processor_kwargs={
                 "max_pixels": int(self.max_image_width) * int(self.max_image_height),
                 "nframes": int(self.max_images),
-                "fps": 1,
+                "fps": 1, 
             },
             trust_remote_code=True,
         )
