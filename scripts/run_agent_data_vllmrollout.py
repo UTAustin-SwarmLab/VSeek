@@ -215,7 +215,15 @@ def rollout_agent_data(
     
     pending_results: list[dict] = []
     all_results: list[dict] = []
-
+    # Load all results from the output directory
+    all_results = []
+    for file in os.listdir(out_dir):
+        if file.endswith(".jsonl"):
+            with open(os.path.join(out_dir, file), "r") as f:
+                for line in f:
+                    all_results.append(json.loads(line))
+    completed_qids = set([r["qid"] for r in all_results if r.get("qid") is not None])
+    print(f"Completed qids: {completed_qids}")
     # print("Generating HF output")
     # hf_response_tokens = generate_hf_output(actor_model, input_ids, attention_mask, tokenizer, max_response_length)
     # print("HF output generated")
@@ -286,7 +294,7 @@ def rollout_agent_data(
     rollout_config.actor_rollout_ref.rollout.temperature = 0.5
     rollout_config.actor_rollout_ref.rollout.n = passes
 
-    rollout_config.actor_rollout_ref.rollout.agent.num_workers = 8
+    rollout_config.actor_rollout_ref.rollout.agent.num_workers = 4
     rollout_config.actor_rollout_ref.rollout.skip_tokenizer_init = True
     rollout_config.actor_rollout_ref.rollout.over_sample_rate = 0.0
     rollout_config.actor_rollout_ref.rollout.prompt_length = max_prompt_length
@@ -305,9 +313,23 @@ def rollout_agent_data(
     # Minibatch inference with periodic writes
     total = len(examples)
     print(f"Rank {rank}/{world_size} processing {total} examples")
-    for start in tqdm(range(0, total, batch_size), desc=f"Rank {rank}/{world_size} processing examples"):
-        end = min(start + batch_size, total)
-        batch = examples[start:end]
+
+    start = 0
+    while start < total:
+        batch = []
+        qids = []
+        while len(batch) < batch_size:
+            if start >= total:
+                break
+            if start in completed_qids:
+                print(f"Skipping {start} because it is already completed")
+                start += 1
+                continue
+            batch.append(examples[start])
+            qids.append(start)
+            start += 1
+        if len(batch) == 0:
+            continue
         for ex in batch:
             ex["tools_kwargs"]["video_search"]["execute_kwargs"]["topk"] = topk
             
@@ -344,7 +366,7 @@ def rollout_agent_data(
             agent_name = "vseek_fanout_agent"
         else:
             agent_name = "vseek_tag_agent"
-        qids = np.arange(start, end)
+        
         qid_to_meta = {
             int(qid): {
                 "video_id": ex.get("video_id"),
@@ -361,7 +383,7 @@ def rollout_agent_data(
                 "agent_name": np.array([agent_name] * len(messages_np)),
                 "data_source": np.array(["lvb"] * len(messages_np)),
                 "reward_model": np.array([{"style": "rule", "ground_truth": "1.0"}] * len(messages_np)),
-                "qid": qids,
+                "qid": np.array(qids, dtype=int),
             },
         )
         
@@ -397,6 +419,7 @@ def rollout_agent_data(
                     "gt": meta["gt"],
                     "parsed_pred": [parsed_pred],
                     "turns": [str(turns)],
+                    "qid": qid,
                 }
             else:
                 parsed_results[qid]["parsed_pred"].append(parsed_pred)
@@ -422,7 +445,7 @@ def rollout_agent_data(
         pending_results.extend(parsed_results)
         all_results.extend(parsed_results)
         # Periodic flush to JSONL
-        if len(pending_results) >= flush_every or end == total:
+        if len(pending_results) >= flush_every or start >= total:
             with open(out_path, "a", encoding="utf-8") as f:
                 for r in pending_results:
                     f.write(json.dumps(r, ensure_ascii=False) + "\n")
@@ -432,7 +455,7 @@ def rollout_agent_data(
             # Replace with pass@k analysis
             num_correct = sum(1 for r in all_results if parse_answer(r.get("majority_vote")) == (r.get("gt") or ""))
             print(
-                f"[rank {rank}] Progress {end}/{total} | Accuracy: {acc:.3f} ({num_correct}/{len(all_results)})"
+                f"[rank {rank}] Progress {start}/{total} | Accuracy: {acc:.3f} ({num_correct}/{len(all_results)})"
             )
         
         import math
