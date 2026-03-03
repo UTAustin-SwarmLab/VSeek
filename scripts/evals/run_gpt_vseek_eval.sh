@@ -1,0 +1,5 @@
+python scripts/run_api_eval.py --agent_type agentic --model_type gpt52 --dataset cgbench --retriever_server_url http://127.0.0.1:9000 --topk 4 --max_turns 4 --passes 4 --output_dir results/vseek/gpt/cgbench
+python scripts/run_api_eval.py --agent_type agentic --model_type gpt52 --dataset lvbench --retriever_server_url http://127.0.0.1:9000 --topk 4 --max_turns 4 --passes 4 --output_dir results/vseek/gpt/lvbench
+python scripts/run_api_eval.py --agent_type agentic --model_type gpt52 --dataset videomme --retriever_server_url http://127.0.0.1:9000 --topk 4 --max_turns 4 --passes 4 --output_dir results/vseek/gpt/videomme
+python scripts/run_api_eval.py --agent_type agentic --model_type gpt52 --dataset mlvu --retriever_server_url http://127.0.0.1:9000 --topk 4 --max_turns 4 --passes 4 --output_dir results/vseek/gpt/mlvu
+python scripts/run_api_eval.py --agent_type agentic --model_type gpt52 --dataset lvb --retriever_server_url http://127.0.0.1:9000 --topk 4 --max_turns 4 --passes 4 --output_dir results/vseek/gpt/lvb

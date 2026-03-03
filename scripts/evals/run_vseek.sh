@@ -1,0 +1,4 @@
+
+bash scripts/evals/vllm_vseek_tests_ckpt.sh --devices 2 --batch-size 16 --output-base results/vseek/VSeek-Puls --model-path checkpoints/vseek/qwen3-4bt_vl_all-pulsreward-vllm-wtool-tagsummary/global_step_760/actor/huggingface --datasets cgbench
+bash scripts/evals/vllm_vseek_tests_ckpt.sh --devices 2 --batch-size 16 --output-base results/vseek/VSeek-EM --model-path checkpoints/vseek/qwen3-4bt_vl_all-emreward-vllm-wtool-tagsummary/global_step_680/actor/huggingface --datasets cgbench
+bash scripts/evals/vllm_vseek_tests_ckpt.sh --devices 2 --batch-size 16 --output-base results/vseek/VSeek-Base --model-path Qwen/Qwen3-VL-4B-Thinking --datasets cgbench

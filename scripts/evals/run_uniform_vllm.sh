@@ -6,11 +6,14 @@ DEVICE=0
 MODEL="OpenGVLab/InternVL3_5-4B-HF"
 FRAMES=64
 OUTPUT_DIR="results/uniform_vllm"
-DATASETS="lvb videomme mlvu lvbench"
+DATASETS="lvb videomme mlvu lvbench cgbench"
 PROMPT_TYPE="cot"
 SERVER_PORT=8002
 TEMPERATURE=0.7
 BATCH_SIZE=16
+IMAGE_QUALITY=90
+MAX_IMAGE_WIDTH=256
+MAX_IMAGE_HEIGHT=256
 MAX_MM_CACHE_RESTARTS=3
 RESTART_SLEEP_SECONDS=5
 MM_CACHE_ERROR_PATTERN="AssertionError: Expected a cached item for mm_hash="
@@ -55,6 +58,18 @@ while [ $# -gt 0 ]; do
             BATCH_SIZE="$2"
             shift 2
             ;;
+        --image-quality)
+            IMAGE_QUALITY="$2"
+            shift 2
+            ;;
+        --max-image-width)
+            MAX_IMAGE_WIDTH="$2"
+            shift 2
+            ;;
+        --max-image-height)
+            MAX_IMAGE_HEIGHT="$2"
+            shift 2
+            ;;
         --temperature)
             TEMPERATURE="$2"
             shift 2
@@ -69,6 +84,9 @@ while [ $# -gt 0 ]; do
             echo "  --vllm-port PORT      Port for vLLM server (default: 8002)"
             echo "  --datasets NAMES      Space-separated list of datasets (default: lvb lvbench videomme)"
             echo "  --prompt-type TYPE    Agent prompt type: base or cot (default: cot)"
+            echo "  --image-quality Q     JPEG quality 1-100 for encoded frames (default: 90)"
+            echo "  --max-image-width W   Frame resize max width before encoding (default: 256)"
+            echo "  --max-image-height H  Frame resize max height before encoding (default: 256)"
             exit 0
             ;;
         *)
@@ -120,6 +138,9 @@ for DATASET in $DATASETS; do
             dataset.name="$DATASET" \
             +inference.passes=4 \
             inference.temperature="$TEMPERATURE" \
+            inference.image_quality="$IMAGE_QUALITY" \
+            inference.max_image_width="$MAX_IMAGE_WIDTH" \
+            inference.max_image_height="$MAX_IMAGE_HEIGHT" \
             +inference.batch_size="$BATCH_SIZE" \
             > >(tee "$run_log") 2>&1 &
         cmd_pid=$!
