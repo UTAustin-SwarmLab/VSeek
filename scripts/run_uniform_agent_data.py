@@ -23,6 +23,7 @@ from data.lvb import LongVideoBench
 from data.lvbench import LVBench
 from data.videomme import VideoMME
 from data.mlvu import MLVU
+from data.cgbench import CGBench
 import hydra
 from omegaconf import DictConfig
 
@@ -35,6 +36,8 @@ def build_options_string(candidates: list[str], dataset_name: str) -> str:
     elif dataset_name == "videomme":
         lines = [f"{text}" for idx, text in enumerate(candidates)]
     elif dataset_name == "mlvu":
+        lines = [f"{idx}. {text}" for idx, text in enumerate(candidates)]
+    elif dataset_name == "cgbench":
         lines = [f"{idx}. {text}" for idx, text in enumerate(candidates)]
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
@@ -107,11 +110,10 @@ async def process_entry(entry, agent, data_root, cfg, results, results_file, sem
             return None
         all_preds = []
         all_parsed_preds = []
+        video_frames = await asyncio.to_thread(VideoFrames.load, str(pkl_path))
         for pass_idx in range(passes):
             try:
                 # Offload blocking IO to thread pool
-                video_frames = await asyncio.to_thread(VideoFrames.load, str(pkl_path))
-
                 question = entry["question"]
                 candidates = entry["candidates"]
                 correct_choice = entry["correct_choice"]
@@ -187,6 +189,8 @@ async def run_async(cfg: DictConfig):
         dataset = VideoMME(cfg)
     elif cfg.dataset.name == "mlvu":
         dataset = MLVU(cfg)
+    elif cfg.dataset.name == "cgbench":
+        dataset = CGBench(cfg)
     else:
         raise ValueError(f"Unsupported dataset: {cfg.dataset.name}")
     
