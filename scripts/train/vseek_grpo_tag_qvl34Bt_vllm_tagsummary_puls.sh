@@ -58,8 +58,8 @@ python3 -m vseek.trainer.main_ppo \
     trainer.critic_warmup=0 \
     trainer.logger='["console","wandb"]' \
     trainer.project_name='vseek' \
-    trainer.experiment_name='qwen3-4bt_vl_all-pulsreward-vllm-wtool-tagsummary' \
-    trainer.n_gpus_per_node=5 \
+    trainer.experiment_name='qwen3-4bt_vl_all-pulsreward-vllm-wtool-tagsummarytest' \
+    trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq=40 \
     trainer.test_freq=40 \
