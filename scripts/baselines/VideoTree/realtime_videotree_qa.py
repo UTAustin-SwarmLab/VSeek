@@ -13,10 +13,9 @@ from scipy.cluster.hierarchy import fcluster, linkage
 from sklearn.cluster import KMeans
 from transformers import CLIPModel, CLIPProcessor
 
-
 MODEL_VARIANTS: dict[str, dict[str, Optional[str]]] = {
     "gpt5": {
-        "model_name": "gpt-5",
+        "model_name": "gpt-5.2",
         "base_url": None,
     },
     "qwen4b_instruct": {
@@ -94,8 +93,7 @@ class RuntimeVideoTreeQA:
         self.config = config
         if config.model_variant not in MODEL_VARIANTS:
             raise ValueError(
-                f"Unsupported model_variant='{config.model_variant}'. "
-                f"Available: {sorted(MODEL_VARIANTS.keys())}"
+                f"Unsupported model_variant='{config.model_variant}'. " f"Available: {sorted(MODEL_VARIANTS.keys())}"
             )
         variant_cfg = MODEL_VARIANTS[config.model_variant]
         # Variant provides defaults; explicit fields can still override.
@@ -116,7 +114,7 @@ class RuntimeVideoTreeQA:
         self.qa_model_name = config.qa_prompt_model or config.model_name
 
     @staticmethod
-    def _parse_answer(text: str) -> str:
+    def _parse_answer(text: str, is_mcq: bool = False) -> str:
         if not text:
             return ""
         answer_tag = re.findall(
@@ -125,12 +123,22 @@ class RuntimeVideoTreeQA:
             flags=re.IGNORECASE,
         )
         target = answer_tag[-1].strip() if answer_tag else text.strip()
-        numbers = re.findall(r"\d+", target)
-        letters = re.findall(r"[a-zA-Z]+", target)
-        if numbers:
-            return numbers[0]
-        if letters:
-            return letters[0]
+
+        # MCQ: extract single letter (A-E) or first number
+        if is_mcq:
+            numbers = re.findall(r"\d+", target)
+            letters = re.findall(r"[a-zA-Z]+", target)
+            if numbers:
+                return numbers[0]
+            # Only use letter if it's a single A-E choice
+            if letters:
+                for tok in letters:
+                    if len(tok) == 1 and tok.upper() in "ABCDE":
+                        return tok.upper()
+                return letters[0]
+            return target
+
+        # Open-ended: return full answer, not just first word
         return target
 
     @staticmethod
@@ -296,8 +304,7 @@ class RuntimeVideoTreeQA:
             {
                 "role": "system",
                 "content": (
-                    "You are a video question answering assistant. "
-                    "Use the provided keyframes as visual evidence."
+                    "You are a video question answering assistant. " "Use the provided keyframes as visual evidence."
                 ),
             },
             {"role": "user", "content": user_content},
@@ -354,8 +361,7 @@ class RuntimeVideoTreeQA:
 
             if score == 2:
                 clusters[cluster_id] = {
-                    i: [primary_indices[j] for j in np.where(sub_cluster_labels == i)[0]]
-                    for i in range(0, sub_k)
+                    i: [primary_indices[j] for j in np.where(sub_cluster_labels == i)[0]] for i in range(0, sub_k)
                 }
                 continue
 
@@ -538,7 +544,7 @@ class RuntimeVideoTreeQA:
         for _ in range(self.config.n_passes):
             raw = self._chat_once(messages, model_name=self.qa_model_name)
             answers.append(raw)
-            parsed_answers.append(self._parse_answer(raw))
+            parsed_answers.append(self._parse_answer(raw, is_mcq=bool(choices)))
 
         return {
             "question": question,
