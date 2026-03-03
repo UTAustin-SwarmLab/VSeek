@@ -64,5 +64,11 @@ dataset:
     dataset_path: "/nas/mars/dataset/MLVU/MLVU"
     burned_path: "/nas/mars/dataset/MLVU/MLVU"
     enabled: true
+
+  cgbench:
+    name: "cgbench"
+    dataset_path: "/nas/mars/dataset/CGBench"
+    burned_path: "/nas/mars/dataset/CGBench/burn-subtitles"
+    enabled: true
   
   

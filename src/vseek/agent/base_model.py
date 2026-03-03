@@ -2,6 +2,8 @@ import os
 from typing import Any, Dict, List
 import uuid
 import asyncio
+import io
+import re
 
 from transformers import AutoProcessor
 from vllm import SamplingParams
@@ -9,6 +11,7 @@ from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.engine.arg_utils import AsyncEngineArgs
 import cv2
 import base64
+from PIL import Image
 
 class LocalVLLMBase:
     def __init__(self, config) -> None:
@@ -19,6 +22,7 @@ class LocalVLLMBase:
 
         # Model / generation settings
         self.model_path = config.llm.model
+        self.is_internvl = "InternVL" in str(self.model_path)
         self.max_image_width = config.inference.max_image_width
         self.max_image_height = config.inference.max_image_height
         self.max_images = getattr(config.inference, "max_images_per_turn", 16)
@@ -27,9 +31,8 @@ class LocalVLLMBase:
         # Processor and LLM
         self.processor = AutoProcessor.from_pretrained(self.model_path, trust_remote_code=True)
 
-        # mm_processor_kwargs: InternVL3.5's video processor defaults to 384x384 but
-        # the model expects 448x448. Use size override for InternVL; others use max_pixels.
-        if "InternVL" in str(self.model_path):
+        # InternVL 4B expects 448x448 vision inputs in vLLM.
+        if self.is_internvl:
             mm_processor_kwargs = {
                 "size": {"height": 448, "width": 448},
                 "crop_size": {"height": 448, "width": 448},
@@ -48,11 +51,7 @@ class LocalVLLMBase:
             tensor_parallel_size=1,
             gpu_memory_utilization=0.7,
             enforce_eager=True,
-            mm_processor_kwargs={
-                "max_pixels": int(self.max_image_width) * int(self.max_image_height),
-                "nframes": int(self.max_images),
-                "fps": 1, 
-            },
+            mm_processor_kwargs=mm_processor_kwargs,
             trust_remote_code=True,
         )
         
@@ -67,10 +66,60 @@ class LocalVLLMBase:
         )
 
     def build_prompt_and_mm(self, messages: List[Dict[str, Any]]):
+        if self.is_internvl:
+            image_inputs = []
+            template_messages: List[Dict[str, Any]] = []
+            for msg in messages:
+                role = msg.get("role")
+                content = msg.get("content")
+                if not isinstance(content, list):
+                    template_messages.append(msg)
+                    continue
+
+                rebuilt_content = []
+                for item in content:
+                    if not isinstance(item, dict):
+                        continue
+                    item_type = item.get("type")
+                    if item_type == "image_url":
+                        image_url = item.get("image_url")
+                        if isinstance(image_url, dict):
+                            image_url = image_url.get("url")
+                        if isinstance(image_url, str):
+                            match = re.match(r"^data:image/[^;]+;base64,(.+)$", image_url)
+                            if match is not None:
+                                img_bytes = base64.b64decode(match.group(1))
+                                image_inputs.append(Image.open(io.BytesIO(img_bytes)).convert("RGB"))
+                                # InternVL chat templates require explicit multimodal placeholders.
+                                rebuilt_content.append({"type": "image"})
+                    elif item_type == "text":
+                        rebuilt_content.append({"type": "text", "text": item.get("text", "")})
+
+                template_messages.append({"role": role, "content": rebuilt_content})
+
+            try:
+                prompt = self.processor.apply_chat_template(
+                    template_messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    thinking_enabled=self.thinking_enabled,
+                )
+            except TypeError:
+                prompt = self.processor.apply_chat_template(
+                    template_messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+
+            mm_data: Dict[str, Any] = {}
+            if image_inputs:
+                mm_data["image"] = image_inputs
+            return prompt, mm_data, None
+
         from qwen_vl_utils import process_vision_info
 
-        prompt = self.processor.apply_chat_template(messages, 
-                                                    tokenize=False, 
+        prompt = self.processor.apply_chat_template(messages,
+                                                    tokenize=False,
                                                     add_generation_prompt=True,
                                                     thinking_enabled=self.thinking_enabled)
         image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
