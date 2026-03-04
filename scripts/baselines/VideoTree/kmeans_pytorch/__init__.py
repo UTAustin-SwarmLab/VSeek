@@ -4,7 +4,10 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from .soft_dtw_cuda import SoftDTW
+try:
+    from .soft_dtw_cuda import SoftDTW
+except ImportError:
+    SoftDTW = None
 
 
 def initialize(X, num_clusters, seed):
@@ -57,6 +60,11 @@ def kmeans(
     elif distance == 'cosine':
         pairwise_distance_function = partial(pairwise_cosine, device=device)
     elif distance == 'soft_dtw':
+        if SoftDTW is None:
+            raise ImportError(
+                "soft_dtw distance requested but soft_dtw_cuda is unavailable. "
+                "Use distance='euclidean' or install/build soft_dtw_cuda."
+            )
         sdtw = SoftDTW(use_cuda=device.type == 'cuda', gamma=gamma_for_soft_dtw)
         pairwise_distance_function = partial(pairwise_soft_dtw, sdtw=sdtw, device=device)
     else:
@@ -152,6 +160,11 @@ def kmeans_predict(
     elif distance == 'cosine':
         pairwise_distance_function = partial(pairwise_cosine, device=device)
     elif distance == 'soft_dtw':
+        if SoftDTW is None:
+            raise ImportError(
+                "soft_dtw distance requested but soft_dtw_cuda is unavailable. "
+                "Use distance='euclidean' or install/build soft_dtw_cuda."
+            )
         sdtw = SoftDTW(use_cuda=device.type == 'cuda', gamma=gamma_for_soft_dtw)
         pairwise_distance_function = partial(pairwise_soft_dtw, sdtw=sdtw, device=device)
     else:

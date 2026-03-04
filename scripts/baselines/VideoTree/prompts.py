@@ -1,5 +1,6 @@
-from string import Template
 import re
+from string import Template
+
 
 def first_char_as_answer(res):
     mapping = {'A':0, 'B':1, 'C':2, 'D':3, 'E':4}
@@ -66,7 +67,7 @@ def update_pred_response(text):
 def update_relevance_response(text):
     response = text
     # print("response",response)
-
+    relevance = []
     relevance_match = re.search(r"frame relevance: \[([0-9, ]+)\]", response)
     if relevance_match:
         # Convert the matched string to a list of integers
@@ -95,22 +96,21 @@ class PromptTemplate(object):
 
         if 'loc_pred' in kwargs and 'narration' in kwargs and kwargs['loc_pred'] is not None and kwargs['narration'] is not None:
             narration = kwargs['narration']
-
-            # Find all occurrences of separators and maintain their positions
-            # Use regex to keep the separators with the split parts
-            parts = re.split(r'(#C|#O)', narration)
-            
-            # Recombine parts with their separators
             captions = []
-            for i in range(1, len(parts), 2):
-                if i + 1 < len(parts):
-                    captions.append(parts[i] + parts[i + 1])
+            # Default VideoTree format captions are prefixed with #C/#O.
+            if '#C' in narration or '#O' in narration:
+                parts = re.split(r'(#C|#O)', narration)
+                for i in range(1, len(parts), 2):
+                    if i + 1 < len(parts):
+                        captions.append(parts[i] + parts[i + 1])
+            else:
+                # Fallback: one caption per non-empty line for generic datasets.
+                captions = [line.strip() for line in narration.splitlines() if line.strip()]
 
             # Extract relevant captions based on loc_pred indices
             loc_caption = [captions[i - 1] for i in kwargs['loc_pred'] if i > 0 and i <= len(captions)]
-
-            # Join the relevant captions with "narration" label
-            kwargs['narration'] = "narration " + "".join(loc_caption)
+            if loc_caption:
+                kwargs['narration'] = "narration " + "".join(loc_caption)
 
         for temp in self.prompt_template:
             prompt_filled.append(temp.substitute(kwargs))

@@ -1,79 +1,92 @@
+import os
+import time
+
 import openai
-from openai import OpenAI
-from transformers import AutoTokenizer
 import torch
 import transformers
 from prompts import identity
-import pdb
-from pprint import pprint
-
+from transformers import AutoTokenizer
 
 
 def get_model(args):
     model_name, temperature = args.model, args.temperature
-    if 'gpt' in model_name:
-        # # for azure api
-        # model = GPT(model_name, temperature)
-        # for direct openai api
-        model = GPT(args.api_key, model_name, temperature)
-
-        return model
-    elif 'llama' in model_name:
+    backend = getattr(args, "backend", "openai")
+    if backend == "hf" or "llama" in model_name.lower():
         return LLaMA(model_name, temperature)
+    if backend == "openai":
+        return GPT(
+            model_name=model_name,
+            temperature=temperature,
+            api_key=getattr(args, "api_key", ""),
+            base_url=getattr(args, "base_url", ""),
+            max_retries=getattr(args, "max_retries", 6),
+            request_timeout=getattr(args, "request_timeout", 120.0),
+        )
+    raise ValueError(f"Unsupported backend: {backend}")
+
 
 class Model(object):
     def __init__(self):
         self.post_process_fn = identity
-    
+
     def set_post_process_fn(self, post_process_fn):
         self.post_process_fn = post_process_fn
 
 
 class GPT(Model):
-    def __init__(self, model_name, temperature):
+    def __init__(self, model_name, temperature, api_key="", base_url="", max_retries=6, request_timeout=120.0):
         super().__init__()
         self.model_name = model_name
         self.temperature = temperature
+        self.max_retries = max_retries
+        self.request_timeout = request_timeout
 
         self.badrequest_count = 0
-        # self.client = OpenAI(api_key=api_key)
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY", "EMPTY")
+        # vLLM OpenAI-compatible endpoint, e.g. http://127.0.0.1:8001/v1
+        self.base_url = base_url if base_url else None
+        self.client = openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
+
     def get_response(self, **kwargs):
+        attempt = kwargs.pop("_attempt", 0)
         try:
-            res = openai.chat.completions.create(**kwargs)
-
+            res = self.client.chat.completions.create(timeout=self.request_timeout, **kwargs)
             return res
-        except openai.APIConnectionError as e:
-            print('APIConnectionError')
-            time.sleep(30)
-            return self.get_response(**kwargs)
-        except openai.APIConnectionError as err:
-            print('APIConnectionError')
-            time.sleep(30)
-            return self.get_response(**kwargs)
+        except openai.APIConnectionError:
+            print("APIConnectionError")
+            if attempt >= self.max_retries:
+                return None
+            time.sleep(5)
+            return self.get_response(_attempt=attempt + 1, **kwargs)
         except openai.RateLimitError as e:
-            print('RateLimitError')
+            print("RateLimitError")
+            if attempt >= self.max_retries:
+                return None
             time.sleep(10)
-            return self.get_response(**kwargs)
+            return self.get_response(_attempt=attempt + 1, **kwargs)
         except openai.APITimeoutError as e:
-            print('APITimeoutError')
-            time.sleep(30)
-            return self.get_response(**kwargs)
+            print("APITimeoutError")
+            if attempt >= self.max_retries:
+                return None
+            time.sleep(10)
+            return self.get_response(_attempt=attempt + 1, **kwargs)
         except openai.BadRequestError as e:
-            print('BadRequestError')
+            print("BadRequestError")
             self.badrequest_count += 1
-            print('badrequest_count', self.badrequest_count)
-
+            print("badrequest_count", self.badrequest_count)
             return None
+        except Exception as e:
+            print(f"Unexpected API error: {e}")
+            if attempt >= self.max_retries:
+                return None
+            time.sleep(5)
+            return self.get_response(_attempt=attempt + 1, **kwargs)
 
     def forward(self, head, prompts):
-        messages = [
-            {"role": "system", "content": head}
-        ]
+        messages = [{"role": "system", "content": head}]
         info = {}
         for i, prompt in enumerate(prompts):
-            messages.append(
-                {"role": "user", "content": prompt}
-            )
+            messages.append({"role": "user", "content": prompt})
             response = self.get_response(
                 model=self.model_name,
                 messages=messages,
@@ -81,19 +94,18 @@ class GPT(Model):
             )
 
             if response is None:
-                info['response'] = None
-                info['message'] = None
+                info["response"] = None
+                info["message"] = None
                 return None, info
             else:
 
-                messages.append(
-                    {"role": "assistant", "content": response.choices[0].message.content}
-                )
-                info = dict(response.usage)  # completion_tokens, prompt_tokens, total_tokens
-                info['response'] = messages[-1]["content"]
-                info['message'] = messages
+                messages.append({"role": "assistant", "content": response.choices[0].message.content})
+                usage = response.usage.model_dump() if response.usage is not None else {}
+                info = dict(usage)  # completion_tokens, prompt_tokens, total_tokens
+                info["response"] = messages[-1]["content"]
+                info["message"] = messages
                 # print("response: ", info['response'])
-                return self.post_process_fn(info['response']), info
+                return self.post_process_fn(info["response"]), info
 
 
 class LLaMA(Model):
@@ -112,7 +124,7 @@ class LLaMA(Model):
             torch_dtype=torch.float16,
             device_map="auto",
             tokenizer=tokenizer,
-            temperature=temperature
+            temperature=temperature,
         )
 
     def forward(self, head, prompts):
@@ -124,9 +136,6 @@ class LLaMA(Model):
             num_return_sequences=1,
             eos_token_id=self.tokenizer.eos_token_id,
         )
-        response = sequences[0]['generated_text']  # str
-        info = {
-            'message': prompt,
-            'response': response
-        }
-        return self.post_process_fn(info['response']), info
+        response = sequences[0]["generated_text"]  # str
+        info = {"message": prompt, "response": response}
+        return self.post_process_fn(info["response"]), info
