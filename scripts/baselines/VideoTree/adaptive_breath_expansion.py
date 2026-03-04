@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 from util import *
 from eval import *
@@ -89,6 +90,9 @@ def launch():
     pbar = tqdm(total=len(dataset))
     for i, item in enumerate(dataset):
         ukey_1 = item['quid'] if 'quid' in item else item['uid']
+        ukey_name = 'quid' if 'quid' in item else 'uid'
+        item_start = time.time()
+        print(f"[Stage1] Start item {i + 1}/{len(dataset)} uid={ukey_1}", flush=True)
 
         #init the cluster parameters
         tree_node = [0]
@@ -96,6 +100,10 @@ def launch():
         cluster_num = args.init_cluster_num
         iter_threshold = args.iter_threshold
         adaptive_rate = args.default_adpative_rate
+        width_iter = 0
+        prompt = []
+        pred = []
+        info = {"response": None}
 
 
         clip_length = int(1/args.fps) if args.fps < 1 else 1/args.fps
@@ -103,15 +111,45 @@ def launch():
 
         # load frame features
         frame_feats = load_frame_features(ukey_1, frame_feat_path)
+        num_frames = int(frame_feats.shape[0]) if hasattr(frame_feats, "shape") else 0
+        if num_frames <= 0:
+            print(f"[WARN] uid={ukey_1} has empty frame features; skipping item.", flush=True)
+            processed[ukey_1] = item
+            processed[ukey_1]['prompt'] = []
+            processed[ukey_1]['prompt_template'] = prompter.get_template_str()
+            processed[ukey_1]['response'] = None
+            processed[ukey_1]['pred'] = []
+            pbar.update(1)
+            continue
 
         ### adaptive width expansion
         while(True):
+            width_iter += 1
+            capped_cluster_num = max(1, min(cluster_num, num_frames))
+            if capped_cluster_num != cluster_num:
+                print(
+                    f"[Stage1] uid={ukey_1} width_iter={width_iter} "
+                    f"cluster_num capped {cluster_num}->{capped_cluster_num} "
+                    f"(num_frames={num_frames})",
+                    flush=True,
+                )
+                cluster_num = capped_cluster_num
+            print(
+                f"[Stage1] uid={ukey_1} width_iter={width_iter} cluster_num={cluster_num}",
+                flush=True,
+            )
             # width expansion
+            kmeans_start = time.time()
             cluster_ids_x, cluster_centers = kmeans(X=frame_feats, num_clusters=cluster_num, distance='cosine', device=torch.device('cuda:0'))
             # send cluster_ids_x to GPU 
             cluster_ids_x = cluster_ids_x.to('cuda')
             cluster_centers = cluster_centers.to('cuda')
             closest_points_idx_per_cluster = find_closest_points_per_cluster(frame_feats, cluster_ids_x, cluster_centers)
+            print(
+                f"[Stage1] uid={ukey_1} width_iter={width_iter} kmeans_done "
+                f"in {time.time() - kmeans_start:.2f}s",
+                flush=True,
+            )
             if closest_points_idx_per_cluster is None:
                 # print("closest_points_idx_per_cluster is None")
                 continue
@@ -121,16 +159,35 @@ def launch():
             # relevance scoring
             model.set_post_process_fn(prompter.post_process_fn)
             prompt = prompter.fill(**item, fps=args.fps, clip_length=clip_length, num_words=args.num_words_in_sum, examplars=few_shot_examples, loc_pred = tree_node)
+            print(
+                f"[Stage1] uid={ukey_1} width_iter={width_iter} calling_model "
+                f"tree_nodes={len(tree_node)}",
+                flush=True,
+            )
+            model_start = time.time()
             pred, info = model.forward(prompter.head, prompt)
-            ukey_name = 'quid' if 'quid' in item else 'uid'
+            print(
+                f"[Stage1] uid={ukey_1} width_iter={width_iter} model_done "
+                f"in {time.time() - model_start:.2f}s pred_type={type(pred).__name__}",
+                flush=True,
+            )
+
+            if pred is None:
+                print(
+                    f"[WARN] uid={ukey_1} model returned None; skipping adaptive loop for this item.",
+                    flush=True,
+                )
+                pred = []
+                break
 
             # the output is the predicted frame relevance
             frame_relevance = pred
             high_relevance_frame_num = frame_relevance.count(3)
 
             if high_relevance_frame_num < iter_threshold:
-                if cluster_num < max_cluster_num:
-                    cluster_num = cluster_num * adaptive_rate
+                next_cluster_num = min(cluster_num * adaptive_rate, max_cluster_num, num_frames)
+                if next_cluster_num > cluster_num:
+                    cluster_num = next_cluster_num
                 else:
                     break
             else:
@@ -150,6 +207,14 @@ def launch():
             processed[ukey]['info'] = {k: v for k, v in info.items() if k != 'response'}
         if i % args.save_every == 0:
             save_json(processed, output_path)
+            print(
+                f"[Stage1] checkpoint_saved items={len(processed)} path={output_path}",
+                flush=True,
+            )
+        print(
+            f"[Stage1] Finished item uid={ukey_1} in {time.time() - item_start:.2f}s",
+            flush=True,
+        )
         pbar.update(1)
 
     save_json(all_width_res, output_width_res_path)
