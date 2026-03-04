@@ -3,12 +3,17 @@
 # Default values
 DEVICE=0
 # MODEL="Qwen/Qwen3-VL-4B-Thinking"
-MODEL="OpenGVLab/InternVL3_5-4B-HF"
+MODEL="OpenGVLab/InternVL3_5-4B"
+# Optional model name to send in chat/completions.
+# Leave empty to use MODEL (recommended for external vLLM to avoid 404 mismatches).
+REQUEST_MODEL=""
 FRAMES=64
 OUTPUT_DIR="results/uniform_vllm"
 DATASETS="lvb videomme mlvu lvbench cgbench"
 PROMPT_TYPE="cot"
 SERVER_PORT=8002
+SERVER_HOST="localhost"
+USE_EXTERNAL_VLLM=0
 TEMPERATURE=0.7
 BATCH_SIZE=16
 IMAGE_QUALITY=90
@@ -26,6 +31,10 @@ while [ $# -gt 0 ]; do
             ;;
         -m|--model)
             MODEL="$2"
+            shift 2
+            ;;
+        --request-model)
+            REQUEST_MODEL="$2"
             shift 2
             ;;
         -f|--frames)
@@ -54,6 +63,14 @@ while [ $# -gt 0 ]; do
             SERVER_PORT="$2"
             shift 2
             ;;
+        --vllm-host)
+            SERVER_HOST="$2"
+            shift 2
+            ;;
+        --external-vllm)
+            USE_EXTERNAL_VLLM=1
+            shift
+            ;;
         --batch-size)
             BATCH_SIZE="$2"
             shift 2
@@ -79,9 +96,12 @@ while [ $# -gt 0 ]; do
             echo "Options:"
             echo "  -d, --device ID       GPU device ID (default: 0)"
             echo "  -m, --model PATH      Model path or HF ID (default: Qwen/Qwen3-VL-4B-Thinking)"
+            echo "  --request-model NAME  Model name sent to /chat/completions (default: --model)"
             echo "  -f, --frames N        Max frames per turn (default: 64)"
             echo "  -o, --output-dir DIR  Output directory (default: results/uniform_vllm)"
             echo "  --vllm-port PORT      Port for vLLM server (default: 8002)"
+            echo "  --vllm-host HOST      Host for external vLLM server (default: localhost)"
+            echo "  --external-vllm       Use external OpenAI-compatible vLLM server"
             echo "  --datasets NAMES      Space-separated list of datasets (default: lvb lvbench videomme)"
             echo "  --prompt-type TYPE    Agent prompt type: base or cot (default: cot)"
             echo "  --image-quality Q     JPEG quality 1-100 for encoded frames (default: 90)"
@@ -97,7 +117,7 @@ while [ $# -gt 0 ]; do
 done
 
 # Start vLLM server in background
-echo "Starting vLLM server on port $SERVER_PORT using device $DEVICE..."
+echo "Using vLLM endpoint http://$SERVER_HOST:$SERVER_PORT/v1 (external=$USE_EXTERNAL_VLLM)"
 
 export CUDA_DEVICE_ORDER="PCI_BUS_ID"
 export NCCL_P2P_DISABLE=1
@@ -108,6 +128,18 @@ export VLLM_USE_V1=1
 export CUDA_VISIBLE_DEVICES=$DEVICE
 MODEL_NAME=${MODEL##*/}
 RUN_TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+if [ -n "$REQUEST_MODEL" ]; then
+    EFFECTIVE_MODEL="$REQUEST_MODEL"
+else
+    EFFECTIVE_MODEL="$MODEL"
+fi
+if [ "$USE_EXTERNAL_VLLM" -eq 1 ]; then
+    EXTERNAL_VLLM_BOOL=true
+    ENGINE_NAME=external_vllm
+else
+    EXTERNAL_VLLM_BOOL=false
+    ENGINE_NAME=vllm
+fi
 
 # notify.py "Starting experiment $MODEL on $DEVICE with datasets $DATASETS"
 
@@ -130,8 +162,10 @@ for DATASET in $DATASETS; do
             +agent_type=uniform \
             inference.max_images_per_turn="$FRAMES" \
             +inference.agent_prompt_type="$PROMPT_TYPE" \
-            llm.model="$MODEL" \
-            llm.server_url="http://localhost:$SERVER_PORT/v1" \
+            llm.model="$EFFECTIVE_MODEL" \
+            llm.server_url="http://$SERVER_HOST:$SERVER_PORT/v1" \
+            +llm.use_external_vllm="$EXTERNAL_VLLM_BOOL" \
+            +llm.engine="$ENGINE_NAME" \
             inference.output_dir="$RUN_OUTPUT_DIR" \
             inference.max_output_tokens=8192 \
             inference.gpu_number="$DEVICE" \

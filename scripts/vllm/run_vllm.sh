@@ -2,13 +2,13 @@
 
 # MODEL="OpenGVLab/InternVL2_5-8B"
 # MODEL="meta-llama/Llama-3.2-11B-Vision-Instruct"
-MODEL="Qwen/Qwen2.5-VL-3B-Instruct"
+MODEL="OpenGVLab/InternVL3_5-4B"
 export CUDA_DEVICE_ORDER="PCI_BUS_ID"
 export NCCL_P2P_DISABLE=1
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-PORT=${1:-8002}
+PORT=${1:-8010}
 CUDA_VISIBLE_DEVICES=${2:-4}
 
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}

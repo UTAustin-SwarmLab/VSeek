@@ -37,7 +37,8 @@ class UniformSampleAgent(LocalVLLMBase):
         if self.agent_prompt_type == "base" or self.agent_prompt_type == "single":
             system_prompt = """
                 You are a helpful assistant. Look at the provided images sampled uniformly from a video and must choose the correct option from the given options to answer the question.
-                You must only output the number of the correct option without thinking. Eg. 3
+                You must only output the number of the correct option or the letter corresponding to the provided options without thinking. Eg. 3 or B
+                If the options are numbered, you must output the number. If the options are letters, you must output the letter.
                 
             """
         elif self.agent_prompt_type == "cot":

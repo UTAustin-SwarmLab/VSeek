@@ -12,6 +12,7 @@ from omegaconf import DictConfig
 
 from data.videomme import VideoMME
 from data.lvbench import LVBench
+from data.cgbench import CGBench
 from data.mlvu import MLVU
 from vseek.video_embedding.video_clip import ViClip
 from data.lvb import LongVideoBench
@@ -73,6 +74,9 @@ class VideoSearchServer:
                 self.entries[dataset_name] = dataset.load_data()
             elif dataset_name == "mlvu":
                 dataset = MLVU(args)
+                self.entries[dataset_name] = dataset.load_data()
+            elif dataset_name == "cgbench":
+                dataset = CGBench(args)
                 self.entries[dataset_name] = dataset.load_data()
             else:
                 raise ValueError(f"Unsupported dataset: {dataset_name}")

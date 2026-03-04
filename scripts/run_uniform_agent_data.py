@@ -25,7 +25,7 @@ from data.videomme import VideoMME
 from data.mlvu import MLVU
 from data.cgbench import CGBench
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, open_dict
 
 
 def build_options_string(candidates: list[str], dataset_name: str) -> str:
@@ -286,8 +286,52 @@ async def run_async(cfg: DictConfig):
     else:
         print("No results found.")
 
+def _normalize_llm_engine_config(cfg: DictConfig) -> None:
+    """
+    Normalize engine selection so scripts can switch between:
+    - local vLLM engine (default)
+    - external OpenAI-compatible vLLM server
+    """
+    llm_cfg = cfg.llm
+    current_engine = str(getattr(llm_cfg, "engine", "vllm")).lower()
+    use_external = bool(getattr(llm_cfg, "use_external_vllm", False))
+
+    # Optional env-based override for shell wrappers.
+    env_external = os.getenv("USE_EXTERNAL_VLLM")
+    if env_external is not None:
+        use_external = env_external.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    env_host = os.getenv("EXTERNAL_VLLM_HOST")
+    env_port = os.getenv("EXTERNAL_VLLM_PORT")
+
+    with open_dict(cfg):
+        if use_external or current_engine in {"external_vllm", "vllm_server", "server"}:
+            cfg.llm.use_external_vllm = True
+            cfg.llm.engine = "external_vllm"
+
+            host = env_host or "localhost"
+            if env_port:
+                cfg.llm.server_url = f"http://{host}:{env_port}/v1"
+
+            server_url = str(getattr(cfg.llm, "server_url", "")).strip()
+            if not server_url:
+                raise ValueError(
+                    "External vLLM mode requires llm.server_url "
+                    "(or EXTERNAL_VLLM_PORT/EXTERNAL_VLLM_HOST)."
+                )
+        else:
+            cfg.llm.use_external_vllm = False
+            cfg.llm.engine = "vllm"
+
+
 @hydra.main(version_base=None, config_path="../src/vseek/config/retriever", config_name="config")
 def main(cfg: DictConfig):
+    _normalize_llm_engine_config(cfg)
+    print(
+        f"LLM engine mode: {cfg.llm.engine} "
+        f"(external={cfg.llm.use_external_vllm}, "
+        f"server_url={getattr(cfg.llm, 'server_url', 'N/A')})"
+    )
     asyncio.run(run_async(cfg))
 
 if __name__ == "__main__":
