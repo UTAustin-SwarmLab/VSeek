@@ -100,6 +100,69 @@ Please update the tree node index file (output of last step), data files and out
 sh scripts/egoschema_qa.sh
 ```
 
+## Run with your own vLLM model (OpenAI-compatible server)
+
+The non-`realtime` VideoTree pipeline can call any OpenAI-compatible endpoint, including local vLLM.
+
+### 1) Start vLLM server
+
+Example:
+
+```bash
+vllm serve Qwen/Qwen2.5-VL-7B-Instruct --port 8001
+```
+
+Then use:
+
+- `--backend openai`
+- `--base_url http://127.0.0.1:8001/v1`
+- `--api_key EMPTY` (or your own key if your gateway enforces auth)
+- `--model <your-vllm-model-name>`
+
+### 2) Prepare VideoTree JSONs from VSeek datasets (`lvb`, `lvbench`, `videomme`, `mlvu`)
+
+This repository includes:
+`prepare_videotree_data_from_vseek.py`
+
+It converts VSeek dataset entries into:
+
+- `data.json` (narrations)
+- `anno.json` (question/options/answer)
+- `duration.json` (seconds)
+
+Example:
+
+```bash
+python prepare_videotree_data_from_vseek.py \
+  --dataset_name lvb \
+  --dataset_path /path/to/lvb \
+  --burned_path /path/to/lvb_burned \
+  --output_dir ./prepared/lvb
+```
+
+### 3) Run QA with your vLLM model
+
+```bash
+python main_qa.py \
+  --dataset egoschema \
+  --data_path ./prepared/lvb/data.json \
+  --anno_path ./prepared/lvb/anno.json \
+  --duration_path ./prepared/lvb/duration.json \
+  --output_base_path ./output/lvb \
+  --output_filename qa_vllm.json \
+  --backend openai \
+  --base_url http://127.0.0.1:8001/v1 \
+  --api_key EMPTY \
+  --model Qwen/Qwen2.5-VL-7B-Instruct \
+  --prompt_type qa_standard
+```
+
+Notes:
+
+- This path runs the non-`realtime` baseline only.
+- For full tree expansion (`adaptive_breath_expansion.py` and `depth_expansion.py`), you still need frame features (`--frame_feat_path`) and tree node files.
+- If your narrations do not contain `#C/#O`, prompt slicing now falls back to line-based captions.
+
 
 ## Debug
 

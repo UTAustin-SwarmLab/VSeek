@@ -28,6 +28,9 @@ def load_frame_features(name_ids, save_folder):
 def find_closest_points_per_cluster(x, cluster_ids, cluster_centers):
     # Dictionary to store the indices of the closest points for each cluster
     closest_points_idx_per_cluster = {cluster_id: [] for cluster_id in range(len(cluster_centers))}
+    x_device = x.device
+    cluster_ids = cluster_ids.to(x_device)
+    cluster_centers = cluster_centers.to(x_device)
     
     # Iterate over each cluster
     for cluster_id in range(len(cluster_centers)):
