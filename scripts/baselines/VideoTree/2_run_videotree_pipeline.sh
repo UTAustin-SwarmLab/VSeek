@@ -23,7 +23,9 @@ exec > >(tee -a "${LOG_FILE}") 2>&1
 echo "Logging to ${LOG_FILE}"
 
 # VLM/LLM server config (OpenAI-compatible, e.g. vLLM)
-BASE_URL="http://127.0.0.1:8005/v1"
+# Allow overriding via environment variables for multi-process runs.
+BASE_URL="${BASE_URL:-http://127.0.0.1:8005/v1}"
+BASE_URLS="${BASE_URLS:-${BASE_URL}}"
 API_KEY="EMPTY"
 MODEL_NAME="Qwen/Qwen3-VL-4B-Instruct"
 REQUEST_TIMEOUT="5"
@@ -38,6 +40,92 @@ MLVU_FRAME_FEAT_PATH="./prepared/frame_features/mlvu"
 
 # If >0, run only first N examples
 NUM_EXAMPLES_TO_RUN="-1"
+
+# Parallel execution config (single dataset sharded across GPUs).
+# Comma-separated IDs, e.g. GPU_IDS="0,1,2,3"
+GPU_IDS="${GPU_IDS:-0}"
+PARALLEL_SHARDS="${PARALLEL_SHARDS:-0}"  # 0 means auto from GPU_IDS/BASE_URLS
+
+parse_csv_to_array() {
+  local csv="$1"
+  local -n out_arr="$2"
+  local IFS=','
+  read -r -a out_arr <<< "${csv}"
+}
+
+merge_stage_stat_json() {
+  local output_path="$1"
+  shift
+  python - "${output_path}" "$@" <<'PY'
+import json
+import sys
+
+out_path = sys.argv[1]
+in_paths = sys.argv[2:]
+
+merged = {}
+for p in in_paths:
+    with open(p, "r") as f:
+        payload = json.load(f)
+    data = payload.get("data", payload) if isinstance(payload, dict) else payload
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected dict-like data in {p}, got {type(data).__name__}")
+    overlap = set(merged).intersection(data)
+    if overlap:
+        raise ValueError(f"Duplicate keys while merging {p}: {list(overlap)[:5]}")
+    merged.update(data)
+
+num_total = len(merged)
+num_valids = sum(1 for v in merged.values() if isinstance(v, dict) and v.get("pred", -1) != -1)
+num_corrects = sum(
+    1
+    for v in merged.values()
+    if isinstance(v, dict) and v.get("pred", -1) != -1 and v.get("truth") == v.get("pred")
+)
+stat = {
+    "num_total": num_total,
+    "num_valids": num_valids,
+    "num_corrects": num_corrects,
+    "acc": (num_corrects / num_total) if num_total else 0.0,
+    "data": merged,
+}
+
+with open(out_path, "w") as f:
+    json.dump(stat, f, indent=2)
+print(f"Merged {len(in_paths)} files -> {out_path} ({num_total} samples)")
+PY
+}
+
+merge_list_json() {
+  local output_path="$1"
+  shift
+  python - "${output_path}" "$@" <<'PY'
+import json
+import sys
+
+out_path = sys.argv[1]
+in_paths = sys.argv[2:]
+merged = []
+seen = set()
+
+for p in in_paths:
+    with open(p, "r") as f:
+        payload = json.load(f)
+    if not isinstance(payload, list):
+        raise ValueError(f"Expected list in {p}, got {type(payload).__name__}")
+    for item in payload:
+        name = item.get("name") if isinstance(item, dict) else None
+        if name in seen:
+            raise ValueError(f"Duplicate list item name while merging {p}: {name}")
+        if name is not None:
+            seen.add(name)
+        merged.append(item)
+
+with open(out_path, "w") as f:
+    json.dump(merged, f, indent=2)
+print(f"Merged {len(in_paths)} list files -> {out_path} ({len(merged)} rows)")
+PY
+}
 
 run_one_dataset() {
   local dataset_name="$1"
@@ -72,28 +160,195 @@ run_one_dataset() {
     exit 1
   fi
 
+  local -a GPU_ID_ARR=()
+  local -a BASE_URL_ARR=()
+  parse_csv_to_array "${GPU_IDS}" GPU_ID_ARR
+  parse_csv_to_array "${BASE_URLS}" BASE_URL_ARR
+
+  if (( ${#GPU_ID_ARR[@]} == 0 || ${#BASE_URL_ARR[@]} == 0 )); then
+    echo "GPU_IDS and BASE_URLS must be non-empty."
+    exit 1
+  fi
+
+  local worker_count=1
+  if (( ${#GPU_ID_ARR[@]} > worker_count )); then
+    worker_count="${#GPU_ID_ARR[@]}"
+  fi
+  if (( ${#BASE_URL_ARR[@]} > worker_count )); then
+    worker_count="${#BASE_URL_ARR[@]}"
+  fi
+  if (( PARALLEL_SHARDS > 0 && PARALLEL_SHARDS < worker_count )); then
+    worker_count="${PARALLEL_SHARDS}"
+  fi
+
+  local shard_root="${out_dir}/_parallel_shards"
+  rm -rf "${shard_root}"
+  mkdir -p "${shard_root}"
+
+  local total_items
+  total_items="$(python - "${anno_path}" <<'PY'
+import json, sys
+with open(sys.argv[1], "r") as f:
+    anno = json.load(f)
+if isinstance(anno, dict):
+    print(len(anno))
+elif isinstance(anno, list):
+    print(len(anno))
+else:
+    raise ValueError(f"Unexpected anno type: {type(anno).__name__}")
+PY
+)"
+  if (( total_items <= 0 )); then
+    echo "No items found in ${anno_path}"
+    exit 1
+  fi
+  if (( worker_count > total_items )); then
+    worker_count="${total_items}"
+  fi
+
+  echo "Dataset ${dataset_name}: total_items=${total_items} worker_count=${worker_count}"
+  echo "GPU_IDS=${GPU_IDS}"
+  echo "BASE_URLS=${BASE_URLS}"
+
+  local stage1_file_args=()
+  local stage1_width_args=()
+  local stage2_file_args=()
+  local stage3_file_args=()
+  local shard_count
+  shard_count="$(python - "${data_path}" "${anno_path}" "${duration_path}" "${shard_root}" "${worker_count}" "${NUM_EXAMPLES_TO_RUN}" <<'PY'
+import json
+import os
+import sys
+
+data_path, anno_path, duration_path, shard_root, shard_count_raw, max_examples_raw = sys.argv[1:]
+shard_count = int(shard_count_raw)
+max_examples = int(max_examples_raw)
+
+with open(data_path, "r") as f:
+    data = json.load(f)
+with open(anno_path, "r") as f:
+    anno = json.load(f)
+with open(duration_path, "r") as f:
+    duration = json.load(f)
+
+if isinstance(anno, dict):
+    ordered_ids = list(anno.keys())
+elif isinstance(anno, list):
+    ordered_ids = []
+    for item in anno:
+        if isinstance(item, dict):
+            ordered_ids.append(str(item.get("uid", item.get("id"))))
+else:
+    raise ValueError(f"Unsupported anno type: {type(anno).__name__}")
+
+if max_examples >= 0:
+    ordered_ids = ordered_ids[:max_examples]
+if not ordered_ids:
+    raise ValueError("No ids available for sharding")
+
+actual_shards = min(shard_count, len(ordered_ids))
+buckets = [[] for _ in range(actual_shards)]
+for idx, uid in enumerate(ordered_ids):
+    buckets[idx % actual_shards].append(uid)
+
+for shard_idx, uids in enumerate(buckets):
+    shard_dir = os.path.join(shard_root, f"shard_{shard_idx}")
+    os.makedirs(shard_dir, exist_ok=True)
+
+    if isinstance(anno, dict):
+        anno_part = {uid: anno[uid] for uid in uids if uid in anno}
+    else:
+        uid_set = set(uids)
+        anno_part = [item for item in anno if isinstance(item, dict) and str(item.get("uid", item.get("id"))) in uid_set]
+
+    data_part = {uid: data[uid] for uid in uids if isinstance(data, dict) and uid in data}
+    duration_part = {uid: duration[uid] for uid in uids if isinstance(duration, dict) and uid in duration}
+
+    with open(os.path.join(shard_dir, "data.json"), "w") as f:
+        json.dump(data_part, f, indent=2)
+    with open(os.path.join(shard_dir, "anno.json"), "w") as f:
+        json.dump(anno_part, f, indent=2)
+    with open(os.path.join(shard_dir, "duration.json"), "w") as f:
+        json.dump(duration_part, f, indent=2)
+    with open(os.path.join(shard_dir, "uids.json"), "w") as f:
+        json.dump(uids, f, indent=2)
+
+print(actual_shards)
+PY
+)"
+
+  echo "Created ${shard_count} shard(s) under ${shard_root}"
+
+  local -a PIDS=()
+  local -a JOB_NAMES=()
+  local FAIL=0
+  local shard_idx=0
+
   echo ""
   echo "================ ${dataset_name}: Stage 1 (Adaptive Breadth Expansion) ================"
-  python adaptive_breath_expansion.py \
-    --dataset egoschema \
-    --data_path "${data_path}" \
-    --anno_path "${anno_path}" \
-    --duration_path "${duration_path}" \
-    --frame_feat_path "${frame_feat_path}" \
-    --output_base_path "${stage1_dir}" \
-    --output_filename "relevance_score.json" \
-    --model "${MODEL_NAME}" \
-    --backend openai \
-    --base_url "${BASE_URL}" \
-    --api_key "${API_KEY}" \
-    --request_timeout "${REQUEST_TIMEOUT}" \
-    --max_retries "${MAX_RETRIES}" \
-    --prompt_type cap_score \
-    --num_examples_to_run "${NUM_EXAMPLES_TO_RUN}"
+  for (( shard_idx=0; shard_idx<shard_count; shard_idx++ )); do
+    local shard_dir="${shard_root}/shard_${shard_idx}"
+    local shard_stage1_dir="${shard_dir}/stage1_breadth"
+    local shard_log="${LOG_DIR}/${TIMESTAMP}_2_run_videotree_${dataset_name}_stage1_shard${shard_idx}.log"
+    mkdir -p "${shard_stage1_dir}"
+
+    local gpu_id="${GPU_ID_ARR[$((shard_idx % ${#GPU_ID_ARR[@]}))]}"
+    local base_url="${BASE_URL_ARR[$((shard_idx % ${#BASE_URL_ARR[@]}))]}"
+    echo "Launching Stage1 shard=${shard_idx} gpu=${gpu_id} base_url=${base_url}"
+
+    CUDA_VISIBLE_DEVICES="${gpu_id}" python adaptive_breath_expansion.py \
+      --dataset egoschema \
+      --data_path "${shard_dir}/data.json" \
+      --anno_path "${shard_dir}/anno.json" \
+      --duration_path "${shard_dir}/duration.json" \
+      --frame_feat_path "${frame_feat_path}" \
+      --output_base_path "${shard_stage1_dir}" \
+      --output_filename "relevance_score.json" \
+      --model "${MODEL_NAME}" \
+      --backend openai \
+      --base_url "${base_url}" \
+      --api_key "${API_KEY}" \
+      --request_timeout "${REQUEST_TIMEOUT}" \
+      --max_retries "${MAX_RETRIES}" \
+      --prompt_type cap_score \
+      --num_examples_to_run "-1" \
+      > "${shard_log}" 2>&1 &
+
+    PIDS+=("$!")
+    JOB_NAMES+=("stage1_shard_${shard_idx}")
+    stage1_file_args+=("${shard_stage1_dir}/relevance_score.json")
+    stage1_width_args+=("${shard_stage1_dir}/width_res.json")
+  done
+
+  for i in "${!PIDS[@]}"; do
+    if ! wait "${PIDS[$i]}"; then
+      echo "[ERROR] Failed job: ${JOB_NAMES[$i]}"
+      FAIL=1
+    fi
+  done
+  if (( FAIL != 0 )); then
+    echo "Stage 1 failed for one or more shards."
+    exit 1
+  fi
+
+  merge_stage_stat_json "${relevance_path}" "${stage1_file_args[@]}"
+  merge_list_json "${width_res_path}" "${stage1_width_args[@]}"
 
   echo ""
   echo "================ ${dataset_name}: Stage 2 (Relevance-guided Depth Expansion) ================"
-  python - "${relevance_path}" "${width_res_path}" "${frame_feat_path}" "${depth_idx_path}" <<'PY'
+  PIDS=()
+  JOB_NAMES=()
+  FAIL=0
+  for (( shard_idx=0; shard_idx<shard_count; shard_idx++ )); do
+    local shard_dir="${shard_root}/shard_${shard_idx}"
+    local shard_stage1_dir="${shard_dir}/stage1_breadth"
+    local shard_stage2_dir="${shard_dir}/stage2_depth"
+    local shard_depth_idx_path="${shard_stage2_dir}/depth_expansion_res.json"
+    local shard_log="${LOG_DIR}/${TIMESTAMP}_2_run_videotree_${dataset_name}_stage2_shard${shard_idx}.log"
+    mkdir -p "${shard_stage2_dir}"
+
+    python - "${shard_stage1_dir}/relevance_score.json" "${shard_stage1_dir}/width_res.json" "${frame_feat_path}" "${shard_depth_idx_path}" \
+      > "${shard_log}" 2>&1 <<'PY' &
 import json
 import os
 import sys
@@ -161,25 +416,75 @@ print(f"Wrote depth index for {len(all_data)} samples to {depth_idx_path}")
 if missing_feats > 0:
     print(f"[WARN] missing frame features for {missing_feats} samples")
 PY
+    PIDS+=("$!")
+    JOB_NAMES+=("stage2_shard_${shard_idx}")
+    stage2_file_args+=("${shard_depth_idx_path}")
+  done
+
+  for i in "${!PIDS[@]}"; do
+    if ! wait "${PIDS[$i]}"; then
+      echo "[ERROR] Failed job: ${JOB_NAMES[$i]}"
+      FAIL=1
+    fi
+  done
+  if (( FAIL != 0 )); then
+    echo "Stage 2 failed for one or more shards."
+    exit 1
+  fi
+
+  merge_list_json "${depth_idx_path}" "${stage2_file_args[@]}"
 
   echo ""
   echo "================ ${dataset_name}: Stage 3 (LLM Reasoning / QA) ================"
-  python main_qa.py \
-    --dataset egoschema \
-    --data_path "${data_path}" \
-    --anno_path "${anno_path}" \
-    --duration_path "${duration_path}" \
-    --tree_node_idx "${depth_idx_path}" \
-    --output_base_path "${stage3_dir}" \
-    --output_filename "qa.json" \
-    --model "${MODEL_NAME}" \
-    --backend openai \
-    --base_url "${BASE_URL}" \
-    --api_key "${API_KEY}" \
-    --request_timeout "${REQUEST_TIMEOUT}" \
-    --max_retries "${MAX_RETRIES}" \
-    --prompt_type qa_standard \
-    --num_examples_to_run "${NUM_EXAMPLES_TO_RUN}"
+  PIDS=()
+  JOB_NAMES=()
+  FAIL=0
+  for (( shard_idx=0; shard_idx<shard_count; shard_idx++ )); do
+    local shard_dir="${shard_root}/shard_${shard_idx}"
+    local shard_stage3_dir="${shard_dir}/stage3_qa"
+    local shard_log="${LOG_DIR}/${TIMESTAMP}_2_run_videotree_${dataset_name}_stage3_shard${shard_idx}.log"
+    local shard_depth_idx_path="${shard_dir}/stage2_depth/depth_expansion_res.json"
+    mkdir -p "${shard_stage3_dir}"
+
+    local gpu_id="${GPU_ID_ARR[$((shard_idx % ${#GPU_ID_ARR[@]}))]}"
+    local base_url="${BASE_URL_ARR[$((shard_idx % ${#BASE_URL_ARR[@]}))]}"
+    echo "Launching Stage3 shard=${shard_idx} gpu=${gpu_id} base_url=${base_url}"
+
+    CUDA_VISIBLE_DEVICES="${gpu_id}" python main_qa.py \
+      --dataset egoschema \
+      --data_path "${shard_dir}/data.json" \
+      --anno_path "${shard_dir}/anno.json" \
+      --duration_path "${shard_dir}/duration.json" \
+      --tree_node_idx "${shard_depth_idx_path}" \
+      --output_base_path "${shard_stage3_dir}" \
+      --output_filename "qa.json" \
+      --model "${MODEL_NAME}" \
+      --backend openai \
+      --base_url "${base_url}" \
+      --api_key "${API_KEY}" \
+      --request_timeout "${REQUEST_TIMEOUT}" \
+      --max_retries "${MAX_RETRIES}" \
+      --prompt_type qa_standard \
+      --num_examples_to_run "-1" \
+      > "${shard_log}" 2>&1 &
+
+    PIDS+=("$!")
+    JOB_NAMES+=("stage3_shard_${shard_idx}")
+    stage3_file_args+=("${shard_stage3_dir}/qa.json")
+  done
+
+  for i in "${!PIDS[@]}"; do
+    if ! wait "${PIDS[$i]}"; then
+      echo "[ERROR] Failed job: ${JOB_NAMES[$i]}"
+      FAIL=1
+    fi
+  done
+  if (( FAIL != 0 )); then
+    echo "Stage 3 failed for one or more shards."
+    exit 1
+  fi
+
+  merge_stage_stat_json "${stage3_dir}/qa.json" "${stage3_file_args[@]}"
 
   echo "Completed ${dataset_name}"
 }
