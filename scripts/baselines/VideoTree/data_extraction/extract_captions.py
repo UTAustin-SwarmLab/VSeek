@@ -23,6 +23,9 @@ from data.lvbench import LVBench  # noqa: E402
 from data.mlvu import MLVU  # noqa: E402
 from data.videomme import VideoMME  # noqa: E402
 
+LONG_VIDEO_SECONDS_THRESHOLD = 3600
+LONG_VIDEO_SAMPLE_FPS = 0.125  # 1/8 FPS
+
 
 def parse_args():
     parser = argparse.ArgumentParser("Caption sampled frames via OpenAI-compatible vLLM API.")
@@ -158,6 +161,18 @@ def sample_video_frames(video_path, sample_fps, max_frames):
     return frames
 
 
+def get_video_duration_seconds(video_path):
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return 0
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    cap.release()
+    if fps is None or fps <= 0 or frame_count is None or frame_count <= 0:
+        return 0
+    return float(frame_count) / float(fps)
+
+
 def pil_to_data_url(image):
     buf = io.BytesIO()
     image.save(buf, format="JPEG", quality=90)
@@ -222,9 +237,14 @@ def caption_video(video_id, video_path, client, args):
     if not video_path or not Path(video_path).exists():
         return video_id, [], False
 
+    duration_seconds = get_video_duration_seconds(video_path)
+    effective_sample_fps = args.sample_fps
+    if duration_seconds > LONG_VIDEO_SECONDS_THRESHOLD:
+        effective_sample_fps = LONG_VIDEO_SAMPLE_FPS
+
     frames = sample_video_frames(
         video_path=video_path,
-        sample_fps=args.sample_fps,
+        sample_fps=effective_sample_fps,
         max_frames=args.max_frames_per_video,
     )
     if not frames:
@@ -245,7 +265,7 @@ def caption_video(video_id, video_path, client, args):
 
     caption_texts = repeat_caption_texts_to_target_fps(
         caption_texts=caption_texts,
-        sample_fps=args.sample_fps,
+        sample_fps=effective_sample_fps,
         target_fps=1.0,
     )
     captions = [f"#C {i}: {text}" for i, text in enumerate(caption_texts)]
