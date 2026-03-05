@@ -9,6 +9,21 @@ from tqdm import tqdm
 from pprint import pprint
 
 
+def _count_narration_captions(narration):
+    if narration is None:
+        return 0
+    # Match PromptTemplate.fill caption splitting logic.
+    if '#C' in narration or '#O' in narration:
+        import re
+        parts = re.split(r'(#C|#O)', narration)
+        captions = []
+        for i in range(1, len(parts), 2):
+            if i + 1 < len(parts):
+                captions.append(parts[i] + parts[i + 1])
+        return len(captions)
+    return len([line.strip() for line in narration.splitlines() if line.strip()])
+
+
 def launch():
     args = parse_args()
     pprint(args)
@@ -52,8 +67,14 @@ def launch():
         clip_length = int(1/args.fps) if args.fps < 1 else 1/args.fps
         few_shot_examples = build_fewshot_examples(args.fewshot_example_path, args.data_path)
 
+        sampled_frame_count = None
         if args.tree_node_idx is not None:
             loc = tree_node_idx_dict.get(ukey_1, None)
+            if isinstance(loc, list):
+                total_captions = _count_narration_captions(item.get('narration'))
+                sampled_frame_count = len([idx for idx in loc if isinstance(idx, int) and idx > 0 and idx <= total_captions])
+            else:
+                sampled_frame_count = 0
 
 
         model.set_post_process_fn(prompter.post_process_fn)
@@ -69,6 +90,8 @@ def launch():
         processed[ukey]['prompt_template'] = prompter.get_template_str()
         processed[ukey]['response'] = info['response']
         processed[ukey]['pred'] = pred
+        if sampled_frame_count is not None:
+            processed[ukey]['sampled_frame_count'] = sampled_frame_count
         if args.save_info:
             processed[ukey]['info'] = {k: v for k, v in info.items() if k != 'response'}
         if i % args.save_every == 0:
