@@ -513,3 +513,4 @@ echo ""
 echo "Done. Outputs are under: ${PIPELINE_ROOT}/${SELECTED_DATASET}/stage{1,2,3}_*"
 
 notify.py "VideoTree pipeline completed for ${SELECTED_DATASET}"
+slack_notify.py "VideoTree pipeline completed for ${SELECTED_DATASET}"
