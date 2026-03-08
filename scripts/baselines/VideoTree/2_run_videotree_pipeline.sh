@@ -1,6 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_LABEL_BASE="VideoTree pipeline"
+SELECTED_DATASET="${1:-}"
+
+notify_both() {
+  local message="$1"
+  notify.py "${message}" || true
+  slack_notify.py "${message}" || true
+}
+
 # Uses JSONs prepared by:
 #   1_prepare_videotree_data_from_vseek.sh
 
@@ -11,7 +20,21 @@ TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 LOG_DIR="${OUTPUT_ROOT}/logs"
 mkdir -p "${LOG_DIR}" "${PIPELINE_ROOT}"
 
-SELECTED_DATASET="${1:-}"
+on_exit() {
+  local exit_code=$?
+  local script_label="${SCRIPT_LABEL_BASE}"
+  if [[ -n "${SELECTED_DATASET}" ]]; then
+    script_label="${script_label} for ${SELECTED_DATASET}"
+  fi
+  if (( exit_code == 0 )); then
+    notify_both "${script_label} completed"
+  else
+    notify_both "${script_label} failed (exit=${exit_code})"
+  fi
+}
+
+trap on_exit EXIT
+
 if [[ -z "${SELECTED_DATASET}" ]]; then
   echo "Usage: bash 2_run_videotree_pipeline.sh <dataset>"
   echo "Allowed datasets: lvb | lvbench | videomme | mlvu"
@@ -609,6 +632,3 @@ esac
 
 echo ""
 echo "Done. Outputs are under: ${PIPELINE_ROOT}/${SELECTED_DATASET}/stage{1,2,3}_*"
-
-notify.py "VideoTree pipeline completed for ${SELECTED_DATASET}"
-slack_notify.py "VideoTree pipeline completed for ${SELECTED_DATASET}"

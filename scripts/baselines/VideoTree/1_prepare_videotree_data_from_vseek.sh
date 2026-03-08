@@ -1,6 +1,25 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_LABEL="VideoTree data preparation"
+
+notify_both() {
+  local message="$1"
+  notify.py "${message}" || true
+  slack_notify.py "${message}" || true
+}
+
+on_exit() {
+  local exit_code=$?
+  if (( exit_code == 0 )); then
+    notify_both "${SCRIPT_LABEL} completed"
+  else
+    notify_both "${SCRIPT_LABEL} failed (exit=${exit_code})"
+  fi
+}
+
+trap on_exit EXIT
+
 # Output root for prepared JSONs
 OUTPUT_ROOT="./prepared"
 CAPTION_ROOT="${OUTPUT_ROOT}/captions"
