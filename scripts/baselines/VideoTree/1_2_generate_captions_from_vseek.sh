@@ -29,15 +29,15 @@ MLVU_BURNED_PATH="/nas/mars/dataset/MLVU/MLVU"
 
 # vLLM / OpenAI-compatible API config
 MODEL_NAME="Qwen/Qwen3-VL-4B-Instruct"
-BASE_URL="http://127.0.0.1:8005/v1"
-BASE_URLS="http://127.0.0.1:8000/v1,http://127.0.0.1:8001/v1,http://127.0.0.1:8002/v1,http://127.0.0.1:8005/v1"
+BASE_URL="http://127.0.0.1:8000/v1"
+BASE_URLS="http://127.0.0.1:8000/v1,http://127.0.0.1:8001/v1,http://127.0.0.1:8002/v1,http://127.0.0.1:8005/v1,http://127.0.0.1:8006/v1,http://127.0.0.1:8007/v1"
 API_KEY="EMPTY"
 REQUEST_TIMEOUT="5"
 MAX_RETRIES="2"
-MAX_TOKENS="64"
+MAX_TOKENS="256"
 
 # Caption sampling config
-SAMPLE_FPS="0.25"
+SAMPLE_FPS="1.0"
 MAX_FRAMES_PER_VIDEO="-1"
 MAX_EXAMPLES="-1"  # -1 means all
 OVERWRITE="false"  # true to regenerate existing video_id captions

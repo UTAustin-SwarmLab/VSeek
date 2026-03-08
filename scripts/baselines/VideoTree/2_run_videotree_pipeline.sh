@@ -24,8 +24,8 @@ echo "Logging to ${LOG_FILE}"
 
 # VLM/LLM server config (OpenAI-compatible, e.g. vLLM)
 # Allow overriding via environment variables for multi-process runs.
-BASE_URL="${BASE_URL:-http://127.0.0.1:8005/v1}"
-BASE_URLS="${BASE_URLS:-${BASE_URL}}"
+BASE_URL="${BASE_URL:-http://127.0.0.1:8000/v1}"
+BASE_URLS="${BASE_URLS:-http://127.0.0.1:8000/v1,http://127.0.0.1:8001/v1,http://127.0.0.1:8002/v1,http://127.0.0.1:8005/v1,http://127.0.0.1:8006/v1,http://127.0.0.1:8007/v1}"
 API_KEY="EMPTY"
 MODEL_NAME="Qwen/Qwen3-VL-4B-Instruct"
 REQUEST_TIMEOUT="5"
@@ -42,8 +42,8 @@ MLVU_FRAME_FEAT_PATH="./prepared/frame_features/mlvu"
 NUM_EXAMPLES_TO_RUN="-1"
 
 # Parallel execution config (single dataset sharded across GPUs).
-# Comma-separated IDs, e.g. GPU_IDS="0,1,2,3"
-GPU_IDS="${GPU_IDS:-0}"
+# Comma-separated IDs, e.g. GPU_IDS="0,1,2,5,6,7"
+GPU_IDS="${GPU_IDS:-0,1,2,5,6,7}"
 PARALLEL_SHARDS="${PARALLEL_SHARDS:-0}"  # 0 means auto from GPU_IDS/BASE_URLS
 
 parse_csv_to_array() {
