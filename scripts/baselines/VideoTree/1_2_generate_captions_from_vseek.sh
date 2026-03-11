@@ -60,8 +60,8 @@ SAMPLE_FPS="1.0"
 MAX_FRAMES_PER_VIDEO="-1"
 MAX_EXAMPLES="-1"  # -1 means all
 OVERWRITE="false"  # true to regenerate existing video_id captions
-VIDEO_WORKERS="4"  # 0 auto-selects workers from number of endpoints
-DATASET_MAX_PARALLEL="4"
+VIDEO_WORKERS="8"  # 0 auto-selects workers from number of endpoints
+DATASET_MAX_PARALLEL="1"
 
 caption_one() {
   local dataset_name="$1"
