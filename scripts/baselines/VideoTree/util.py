@@ -79,7 +79,7 @@ def parse_args():
     parser.add_argument("--backend", default="openai", choices=["openai", "hf"], type=str)
     parser.add_argument("--api_key", default="", type=str)
     parser.add_argument("--base_url", default="", type=str)
-    parser.add_argument("--temperature", default=0.0, type=float)
+    parser.add_argument("--temperature", default=0.7, type=float)
     parser.add_argument("--max_retries", default=6, type=int)
     parser.add_argument("--request_timeout", default=120.0, type=float)
     parser.add_argument("--prompt_type", default="qa_standard", type=str)

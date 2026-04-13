@@ -27,8 +27,14 @@ def parse_args():
     parser.add_argument(
         "--narration_source",
         default="subtitle",
-        choices=["subtitle", "question_only"],
-        help="subtitle: build narration from subtitle files; question_only: fallback placeholder text.",
+        choices=["subtitle", "caption", "question_only"],
+        help="subtitle: subtitle json; caption: external caption json; question_only: placeholder text.",
+    )
+    parser.add_argument(
+        "--captions_json",
+        default="",
+        type=str,
+        help="Optional caption JSON (video_id -> list[str] or str). Legacy uid keys are also supported.",
     )
     parser.add_argument("--max_examples", default=-1, type=int)
     return parser.parse_args()
@@ -156,6 +162,30 @@ def subtitles_to_narration(subtitle_path):
     return "\n".join(lines)
 
 
+def captions_to_narration(captions_data, uid, video_id):
+    if not captions_data:
+        return ""
+    value = captions_data.get(uid)
+    if value is None and video_id:
+        value = captions_data.get(video_id)
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        lines = []
+        for i, cap in enumerate(value):
+            text = str(cap).strip()
+            if not text:
+                continue
+            if text.startswith("#C ") or text.startswith("#O "):
+                lines.append(text)
+            else:
+                lines.append(f"#C {i}: {text}")
+        return "\n".join(lines)
+    return ""
+
+
 def main():
     args = parse_args()
     output_dir = Path(args.output_dir)
@@ -167,6 +197,15 @@ def main():
     if args.max_examples > 0:
         entries = entries[: args.max_examples]
 
+    captions_data = {}
+    if args.narration_source == "caption":
+        if not args.captions_json:
+            raise ValueError("--captions_json is required when --narration_source=caption")
+        captions_path = Path(args.captions_json)
+        if not captions_path.exists():
+            raise FileNotFoundError(f"Caption JSON not found: {captions_path}")
+        captions_data = json.loads(captions_path.read_text())
+
     data_json = {}
     anno_json = {}
     duration_json = {}
@@ -174,6 +213,7 @@ def main():
     for entry in entries:
         meta = entry.get("metadata", {})
         uid = str(meta.get("id", ""))
+        video_id = str(meta.get("video_id", ""))
         if not uid:
             continue
 
@@ -184,6 +224,8 @@ def main():
         subtitle_path = entry.get("paths", {}).get("subtitle_path")
         if args.narration_source == "subtitle":
             narration = subtitles_to_narration(subtitle_path)
+        elif args.narration_source == "caption":
+            narration = captions_to_narration(captions_data, uid, video_id)
         else:
             narration = ""
 

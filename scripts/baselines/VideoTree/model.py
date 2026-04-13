@@ -49,36 +49,63 @@ class GPT(Model):
 
     def get_response(self, **kwargs):
         attempt = kwargs.pop("_attempt", 0)
+        max_attempts = self.max_retries + 1
+        if attempt > 0:
+            print(
+                f"[OpenAI retry] attempt {attempt + 1}/{max_attempts} "
+                f"(timeout={self.request_timeout}s)",
+                flush=True,
+            )
         try:
             res = self.client.chat.completions.create(timeout=self.request_timeout, **kwargs)
             return res
-        except openai.APIConnectionError:
-            print("APIConnectionError")
+        except openai.APIConnectionError as e:
+            print(
+                f"[OpenAI APIConnectionError] attempt {attempt + 1}/{max_attempts}: {e}",
+                flush=True,
+            )
             if attempt >= self.max_retries:
+                print("[OpenAI retry] giving up after connection errors", flush=True)
                 return None
+            print("[OpenAI retry] sleeping 5s before retry", flush=True)
             time.sleep(5)
             return self.get_response(_attempt=attempt + 1, **kwargs)
         except openai.RateLimitError as e:
-            print("RateLimitError")
+            print(
+                f"[OpenAI RateLimitError] attempt {attempt + 1}/{max_attempts}: {e}",
+                flush=True,
+            )
             if attempt >= self.max_retries:
+                print("[OpenAI retry] giving up after rate-limit errors", flush=True)
                 return None
+            print("[OpenAI retry] sleeping 10s before retry", flush=True)
             time.sleep(10)
             return self.get_response(_attempt=attempt + 1, **kwargs)
         except openai.APITimeoutError as e:
-            print("APITimeoutError")
+            print(
+                f"[OpenAI APITimeoutError] attempt {attempt + 1}/{max_attempts}: {e}",
+                flush=True,
+            )
             if attempt >= self.max_retries:
+                print("[OpenAI retry] giving up after timeout errors", flush=True)
                 return None
+            print("[OpenAI retry] sleeping 10s before retry", flush=True)
             time.sleep(10)
             return self.get_response(_attempt=attempt + 1, **kwargs)
         except openai.BadRequestError as e:
-            print("BadRequestError")
+            print(f"[OpenAI BadRequestError] {e}", flush=True)
             self.badrequest_count += 1
-            print("badrequest_count", self.badrequest_count)
+            print("badrequest_count", self.badrequest_count, flush=True)
             return None
         except Exception as e:
-            print(f"Unexpected API error: {e}")
+            print(
+                f"[OpenAI UnexpectedError] attempt {attempt + 1}/{max_attempts}: {e}",
+                flush=True,
+            )
             if attempt >= self.max_retries:
+                print("[OpenAI retry] giving up after unexpected errors", flush=True)
                 return None
+            print("[OpenAI retry] sleeping 5s before retry", flush=True)
             time.sleep(5)
             return self.get_response(_attempt=attempt + 1, **kwargs)
 
