@@ -41,6 +41,16 @@ from verl.workers.config import HFModelConfig, RolloutConfig
 
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
+def str2bool(value):
+    if isinstance(value, bool):
+        return value
+    value = str(value).strip().lower()
+    if value in {"true", "1", "yes", "y", "on"}:
+        return True
+    if value in {"false", "0", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
+
 def _get_rank_and_world():
     if dist.is_available() and dist.is_initialized():
         return dist.get_rank(), dist.get_world_size()
@@ -172,6 +182,7 @@ def rollout_agent_data(
     hf_local_model_path: str,
     agent_type: str,
     passes: int,
+    store_preds: bool,
 ):
     ray.init(
         runtime_env={
@@ -407,24 +418,35 @@ def rollout_agent_data(
         # Build per-example results and enqueue for write
         parsed_results = dict()
         for j, res in enumerate(results):
-            pred_text = tokenizer.decode(res.batch["responses"], skip_special_tokens=False)
+            pred_text = tokenizer.decode(res.batch["responses"], skip_special_tokens=False)  
             parsed_pred = parse_answer(pred_text)
             turns = num_turns[j]
             print(f"Parsed pred: {parsed_pred} over {turns} turns")
             qid = int(results.non_tensor_batch["qid"][j])
             meta = qid_to_meta.get(qid, {"video_id": None, "gt": None})
             if qid not in parsed_results:
-                parsed_results[qid] = {
-                    "video_id": meta["video_id"],
-                    "gt": meta["gt"],
-                    "parsed_pred": [parsed_pred],
-                    "turns": [str(turns)],
-                    "qid": qid,
-                }
+                if store_preds:
+                    parsed_results[qid] = {
+                        "video_id": meta["video_id"],
+                        "gt": meta["gt"],
+                        "pred": [pred_text],
+                        "parsed_pred": [parsed_pred],
+                        "turns": [str(turns)],
+                        "qid": qid,
+                    }
+                else:
+                    parsed_results[qid] = {
+                        "video_id": meta["video_id"],
+                        "gt": meta["gt"],
+                        "parsed_pred": [parsed_pred],
+                        "turns": [str(turns)],
+                        "qid": qid,
+                    }
             else:
                 parsed_results[qid]["parsed_pred"].append(parsed_pred)
                 parsed_results[qid]["turns"].append(str(turns))
-
+                if store_preds:
+                    parsed_results[qid]["pred"].append(pred_text)
         if parsed_results:
             first_key = next(iter(parsed_results))
             assert len(parsed_results[first_key]["parsed_pred"]) == rollout_config.actor_rollout_ref.rollout.n
@@ -512,6 +534,14 @@ if __name__ == "__main__":
     parser.add_argument("--prompt_type", type=str, default="tag", help="Prompt type: tag or openai or tagsummary or fanout")
     parser.add_argument("--agent_type", type=str, default="tag", help="Agent type: tag or openai or tagsummary or fanout")
     parser.add_argument("--passes", type=int, default=16, help="Number of passes")
+    parser.add_argument(
+        "--store_preds",
+        nargs="?",
+        const=True,
+        default=False,
+        type=str2bool,
+        help="Store predictions in output records (accepts true/false, or bare flag for true)",
+    )
     args = parser.parse_args()
 
     if args.hf_local_model_path is None:
@@ -534,4 +564,5 @@ if __name__ == "__main__":
         hf_local_model_path=args.hf_local_model_path,
         agent_type=args.agent_type,
         passes=args.passes,
+        store_preds=args.store_preds,
     )

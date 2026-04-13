@@ -28,6 +28,7 @@ from data.cgbench import CGBench
 from data.lvb import LongVideoBench
 from data.lvbench import LVBench
 from data.mlvu import MLVU
+from data.prompts.tagbasedsummary import system_prompt as tagbased_summary_system_prompt
 from data.videomme import VideoMME
 from vseek.data.frame import VideoFrames
 
@@ -214,26 +215,6 @@ def _call_retriever(
         return []
 
 
-def _agentic_system_prompt() -> str:
-    return """
-You are a video analysis agent that answers multiple-choice video QA over multiple turns.
-You do not have full video context at the beginning.
-Tool execution is handled by the host application through an external retriever server.
-
-INSTRUCTIONS:
-1) Write concise reasoning in <think>...</think>.
-2) Then choose exactly one action:
-   - <search>...</search> for language-based retrieval.
-   - <search_subtitle>...</search_subtitle> for subtitle-based retrieval.
-   - <search_summary></search_summary> for uniformly sampled global context.
-   - <answer>...</answer> when evidence is sufficient.
-3) Output exactly one action block per turn, never multiple.
-4) If evidence is insufficient, use one search action before answering.
-5) Use <search_summary></search_summary> at most once.
-6) In <answer>, return only one option id (number or letter), no extra words.
-""".strip()
-
-
 def _uniform_system_prompt() -> str:
     return (
         "You are a helpful assistant. "
@@ -316,7 +297,7 @@ async def _run_agentic_once(
 ) -> tuple[str, list[dict[str, Any]]]:
     options_str = build_options_string(entry["candidates"], dataset_name)
     conversation: list[dict[str, Any]] = [
-        {"role": "system", "content": _agentic_system_prompt()},
+        {"role": "system", "content": tagbased_summary_system_prompt.strip()},
         {
             "role": "user",
             "content": f"Question: {entry['question']}\nOptions:\n{options_str}\n"
