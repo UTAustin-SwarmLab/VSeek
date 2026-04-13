@@ -49,7 +49,7 @@ class UniformSampleAgent(LocalVLLMBase):
                 2. You must provide the final answer the question with the correct option after ###.
                 3. Do not provide empty fields and you must provide an answer to the best of your ability.
                 4. For example.
-                <think>I have found the mixing bowl, but no ingredients have been added yet. I need to find the next action where something is put into the bowl.</think>
+                <think>I have found the mixing bowl, but no ingredients have been added yet. I need to find the next action where something is put into the bowl. I found it, based on the question, the action is mixing, hence the answer option is 3.</think>
                 ### 3
                 """
 

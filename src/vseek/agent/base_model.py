@@ -195,7 +195,11 @@ class LocalVLLMBase:
                     max_tokens=self.max_output_tokens,
                 )
 
-            response = await asyncio.to_thread(_request)
+            try:
+                response = await asyncio.to_thread(_request)
+            except Exception as e:
+                print(f"Error: {e}")
+                return ""
             return response.choices[0].message.content or ""
 
         prompt, mm_data, video_kwargs = self.build_prompt_and_mm(messages)
