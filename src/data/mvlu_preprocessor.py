@@ -166,6 +166,12 @@ if __name__ == "__main__":
         help="Prompt type: tag or openai or tagsummary"
     )
     parser.add_argument(
+        "--puls_json",
+        type=str,
+        default="puls_refined.json",
+        help="PULS JSON filename/path to load (e.g. puls_direct.json).",
+    )
+    parser.add_argument(
         "--batch_size",
         type=int,
         default=50,
@@ -191,6 +197,7 @@ if __name__ == "__main__":
             "mlvu": {
                 "dataset_path": local_dataset_path,
                 "burned_path": args.burned_path,
+                "puls_json": args.puls_json,
             },
         },
         "retriever": {

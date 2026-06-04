@@ -170,6 +170,12 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--puls_json",
+        type=str,
+        default="puls_refined.json",
+        help="PULS JSON filename/path to load (e.g. puls_direct.json).",
+    )
+    parser.add_argument(
         "--gpu_number",
         type=int,
         default=0,
@@ -196,6 +202,7 @@ if __name__ == "__main__":
             "videomme": {
                 "dataset_path": local_dataset_path,
                 "burned_path": args.burned_path,
+                "puls_json": args.puls_json,
             },
         },
         "retriever": {

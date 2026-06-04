@@ -144,12 +144,25 @@ class LongVideoBench(Manager):
         # ]
         self.read_number = 44
 
+    def _resolve_puls_path(self) -> str | None:
+        configured_path = self.cfg.dataset.lvb.get("puls_json") if self.cfg and self.cfg.get("dataset") else None
+        if configured_path:
+            if os.path.isabs(configured_path):
+                return configured_path
+            return os.path.join(self._dataset_path, configured_path)
+
+        default_path = os.path.join(self._dataset_path, "puls_refined.json")
+        if os.path.exists(default_path):
+            return default_path
+        return None
+
     def load_data(self):
         category_buckets = defaultdict(list)
 
-        if os.path.exists(os.path.join(self._dataset_path, "puls_refined.json")):
-            print(f"Loading LVB dataset from {os.path.join(self._dataset_path, 'puls_refined.json')}")
-            with open(os.path.join(self._dataset_path, "puls_refined.json"), "r") as f:
+        puls_path = self._resolve_puls_path()
+        if puls_path is not None:
+            print(f"Loading LVB dataset from {puls_path}")
+            with open(puls_path, "r") as f:
                 dataset = json.load(f)
             return dataset
         else:
