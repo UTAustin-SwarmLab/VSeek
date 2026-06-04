@@ -11,6 +11,7 @@ RETRIEVAL_MODEL_PATH=""
 WINDOW_SIZE=8
 GPU_NUMBER=0
 PROMPT_TYPE="tag"  # Options: tag, openai, tagsummary
+PULS_JSON="puls_refined.json"
 TRAIN_RATIO=0.8
 SEED=42
 MODE="both"  # Options: both, index, parquet
@@ -31,6 +32,7 @@ usage() {
     echo "  --window_size SIZE           Window size for VideoFrames index (default: $WINDOW_SIZE)"
     echo "  --gpu_number NUM             GPU number to use (default: $GPU_NUMBER)"
     echo "  --prompt_type TYPE           Prompt type: tag, openai, tagsummary (default: $PROMPT_TYPE)"
+    echo "  --puls_json PATH             PULS JSON filename/path (default: $PULS_JSON)"
     echo "  --train_ratio RATIO          Train split ratio 0-1 (default: $TRAIN_RATIO)"
     echo "  --seed SEED                  Random seed for splitting (default: $SEED)"
     echo "  --mode MODE                  Processing mode: both, index, parquet (default: $MODE)"
@@ -81,6 +83,10 @@ while [[ $# -gt 0 ]]; do
             PROMPT_TYPE="$2"
             shift 2
             ;;
+        --puls_json)
+            PULS_JSON="$2"
+            shift 2
+            ;;
         --train_ratio)
             TRAIN_RATIO="$2"
             shift 2
@@ -129,6 +135,7 @@ echo "Index Path: $INDEX_PATH"
 echo "Window Size: $WINDOW_SIZE"
 echo "Train Ratio: $TRAIN_RATIO"
 echo "Prompt Type: $PROMPT_TYPE"
+echo "PULS JSON: $PULS_JSON"
 echo "Mode: $MODE"
 echo ""
 
@@ -150,6 +157,7 @@ echo "Running Video-MME preprocessor (mode: $MODE)..."
 CMD="python3 src/data/videomme_preprocessor.py \
     --local_dataset_path \"$DATASET_PATH\" \
     --burned_path \"$BURNED_PATH\" \
+    --puls_json \"$PULS_JSON\" \
     --window_size $WINDOW_SIZE \
     --gpu_number $GPU_NUMBER \
     --mode $MODE \

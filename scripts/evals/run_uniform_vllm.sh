@@ -8,12 +8,13 @@ MODEL="OpenGVLab/InternVL3_5-4B"
 # Leave empty to use MODEL (recommended for external vLLM to avoid 404 mismatches).
 REQUEST_MODEL=""
 FRAMES=64
-OUTPUT_DIR="results/uniform_vllm"
+OUTPUT_DIR="results/uniform_vllm2"
 DATASETS="lvb videomme mlvu lvbench cgbench"
 PROMPT_TYPE="cot"
 SERVER_PORT=8002
 SERVER_HOST="localhost"
 USE_EXTERNAL_VLLM=0
+PASSES=4
 TEMPERATURE=0.7
 BATCH_SIZE=16
 IMAGE_QUALITY=90
@@ -91,6 +92,10 @@ while [ $# -gt 0 ]; do
             TEMPERATURE="$2"
             shift 2
             ;;
+        --passes)
+            PASSES="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo "Options:"
@@ -104,6 +109,7 @@ while [ $# -gt 0 ]; do
             echo "  --external-vllm       Use external OpenAI-compatible vLLM server"
             echo "  --datasets NAMES      Space-separated list of datasets (default: lvb lvbench videomme)"
             echo "  --prompt-type TYPE    Agent prompt type: base or cot (default: cot)"
+            echo "  --passes N            Number of passes per question (default: 4)"
             echo "  --image-quality Q     JPEG quality 1-100 for encoded frames (default: 90)"
             echo "  --max-image-width W   Frame resize max width before encoding (default: 256)"
             echo "  --max-image-height H  Frame resize max height before encoding (default: 256)"
@@ -170,7 +176,7 @@ for DATASET in $DATASETS; do
             inference.max_output_tokens=8192 \
             inference.gpu_number="$DEVICE" \
             dataset.name="$DATASET" \
-            +inference.passes=4 \
+            +inference.passes="$PASSES" \
             inference.temperature="$TEMPERATURE" \
             inference.image_quality="$IMAGE_QUALITY" \
             inference.max_image_width="$MAX_IMAGE_WIDTH" \

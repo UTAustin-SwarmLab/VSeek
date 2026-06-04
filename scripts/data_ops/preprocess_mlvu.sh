@@ -12,6 +12,7 @@ WINDOW_SIZE="${WINDOW_SIZE:-8}"
 PROMPT_TYPE="${PROMPT_TYPE:-tag}"
 MAX_FRAMES_PER_TURN="${MAX_FRAMES_PER_TURN:-16}"
 GPU_NUMBER="${GPU_NUMBER:-0}"
+PULS_JSON="${PULS_JSON:-puls_refined.json}"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -46,6 +47,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --gpu_number)
             GPU_NUMBER="$2"
+            shift 2
+            ;;
+        --puls_json)
+            PULS_JSON="$2"
             shift 2
             ;;
         --embed_frames)
@@ -115,6 +120,7 @@ ARGS=(
     --prompt_type "$PROMPT_TYPE"
     --max_frames_per_turn "$MAX_FRAMES_PER_TURN"
     --gpu_number "$GPU_NUMBER"
+    --puls_json "$PULS_JSON"
 )
 
 # Add embed_frames flag if index_path is set

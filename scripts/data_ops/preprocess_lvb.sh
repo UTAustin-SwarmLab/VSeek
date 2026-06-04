@@ -11,6 +11,7 @@ WINDOW_SIZE=8
 TRAIN_RATIO=0.8
 SEED=42
 PROMPT_TYPE="tag"  # Options: tag, openai, tagsummary
+PULS_JSON="puls_refined.json"
 THUMB_MAX_SIDE=224
 THUMB_QUALITY=85
 VSEEK_WORKERS=4
@@ -28,6 +29,7 @@ usage() {
     echo "  --train_ratio RATIO          Train split ratio 0-1 (default: $TRAIN_RATIO)"
     echo "  --seed SEED                  Random seed for splitting (default: $SEED)"
     echo "  --prompt_type TYPE           Prompt type: tag, openai, tagsummary (default: $PROMPT_TYPE)"
+    echo "  --puls_json PATH             PULS JSON filename/path (default: $PULS_JSON)"
     echo "  --thumb_max_side SIZE        Max side for thumbnail resize (default: $THUMB_MAX_SIDE)"
     echo "  --thumb_quality QUALITY      JPEG quality 1-100 (default: $THUMB_QUALITY)"
     echo "  --workers NUM                Number of workers (default: $VSEEK_WORKERS)"
@@ -73,6 +75,10 @@ while [[ $# -gt 0 ]]; do
             PROMPT_TYPE="$2"
             shift 2
             ;;
+        --puls_json)
+            PULS_JSON="$2"
+            shift 2
+            ;;
         --thumb_max_side)
             THUMB_MAX_SIDE="$2"
             shift 2
@@ -109,6 +115,7 @@ echo "Index Path: $INDEX_PATH"
 echo "Window Size: $WINDOW_SIZE"
 echo "Train Ratio: $TRAIN_RATIO"
 echo "Prompt Type: $PROMPT_TYPE"
+echo "PULS JSON: $PULS_JSON"
 echo ""
 
 # Check if running in the project root
@@ -134,6 +141,7 @@ python3 src/data/lvb_preprocessor.py \
     --window_size $WINDOW_SIZE \
     --embed_frames \
     --prompt_type "$PROMPT_TYPE" \
+    --puls_json "$PULS_JSON" \
     --thumb_max_side $THUMB_MAX_SIDE \
     --thumb_quality $THUMB_QUALITY \
     --seed $SEED

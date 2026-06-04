@@ -22,6 +22,7 @@ PROMPT_TYPE="tagsummary"      # tag, tagsummary
 AGENT_TYPE="tagsummary"  # tag, tagsummary, fanout
 PASSES=1              # Default
 DEVICES="1"
+LATENCY_ANALYSIS=false
 # ==========================================
 # Argument Parsing Logic
 # ==========================================
@@ -30,6 +31,7 @@ while [[ "$#" -gt 0 ]]; do
         --prompt-type) PROMPT_TYPE="$2"; shift ;;
         --agent-type)  AGENT_TYPE="$2"; shift ;;
         --passes)      PASSES="$2"; shift ;;
+        --passes-per-question) PASSES="$2"; shift ;;
         --batch-size)  BATCH_SIZE="$2"; shift ;;
         --model-path)  MODEL_PATH="$2"; shift ;;
         --devices)     DEVICES="$2"; shift ;;
@@ -43,21 +45,31 @@ while [[ "$#" -gt 0 ]]; do
                 STORE_PREDS=true
             fi
             ;;
+        --latency-analysis)
+            LATENCY_ANALYSIS=true
+            ;;
         -h|--help)
             echo "Usage: $0 [options]"
             echo "Options:"
             echo "  --prompt-type <str>   (default: tagsummary)"
             echo "  --agent-type <str>    (default: tagsummary)"
             echo "  --passes <int>        (default: 16)"
+            echo "  --passes-per-question <int> alias of --passes"
             echo "  --batch-size <int>    (default: 32)"
             echo "  --datasets <tags>     comma-separated tags: videomme,lvb,mlvu,cgbench,lvbench (default: all)"
             echo "  --store-preds <bool>  (default: false)"
+            echo "  --latency-analysis    force LVB-only run and keep preds/timings"
             exit 0
             ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
     shift
 done
+
+if [ "$LATENCY_ANALYSIS" = true ]; then
+    DATASET_TAGS="lvb"
+    STORE_PREDS=true
+fi
 
 echo "==================================="
 echo "Starting Run with Configuration:"
@@ -67,6 +79,7 @@ echo "Passes      : $PASSES"
 echo "Model Path  : $MODEL_PATH"
 echo "Output Base : $OUTPUT_BASE"
 echo "Datasets    : ${DATASET_TAGS:-all}"
+echo "Latency Run : $LATENCY_ANALYSIS"
 echo "==================================="
 
 # ==========================================

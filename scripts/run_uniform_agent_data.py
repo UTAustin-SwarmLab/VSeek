@@ -3,6 +3,7 @@ import json
 import os
 import multiprocessing
 import asyncio
+import time
 # Set start method to spawn before any CUDA init
 try:
     multiprocessing.set_start_method('spawn', force=True)
@@ -110,6 +111,7 @@ async def process_entry(entry, agent, data_root, cfg, results, results_file, sem
             return None
         all_preds = []
         all_parsed_preds = []
+        pass_latencies_sec = []
         video_frames = await asyncio.to_thread(VideoFrames.load, str(pkl_path))
         for pass_idx in range(passes):
             try:
@@ -132,7 +134,10 @@ async def process_entry(entry, agent, data_root, cfg, results, results_file, sem
                 max_retries = 3
                 for attempt in range(max_retries):
                     try:
+                        inference_start = time.perf_counter()
                         trajectory = await agent.run(data_input)
+                        pass_latency = time.perf_counter() - inference_start
+                        pass_latencies_sec.append(pass_latency)
                         break
                     except Exception as e:
                         if attempt == max_retries - 1:
@@ -149,6 +154,10 @@ async def process_entry(entry, agent, data_root, cfg, results, results_file, sem
                 agent_prompt_type = cfg.inference.get("agent_prompt_type", "base")
                 all_preds.append(pred)
                 all_parsed_preds.append(parse_answer_base(pred) if agent_prompt_type == "base" else parse_answer_cot(pred))
+                print(
+                    f"Video {video_id} pass {pass_idx + 1}/{passes}: "
+                    f"inference={pass_latency:.3f}s"
+                )
             except Exception as e:
                 print(f"Failed to process video {video_id}: {e}")
                 import traceback
@@ -170,13 +179,23 @@ async def process_entry(entry, agent, data_root, cfg, results, results_file, sem
             "all_preds": all_preds,
             "gt": correct_choice,
             "all_parsed_preds": all_parsed_preds,
+            "pass_latencies_sec": pass_latencies_sec,
+            "avg_pass_latency_sec": (
+                sum(pass_latencies_sec) / len(pass_latencies_sec) if pass_latencies_sec else None
+            ),
+            "total_inference_time_sec": sum(pass_latencies_sec),
             "majority_vote": majority_vote,
             "is_majority_correct": (majority_vote == correct_choice),
             "correct_count": sum(1 for p in all_parsed_preds if p == correct_choice),
             "total_passes": passes
         }
         
-        print(f"Video {video_id}: Majority='{majority_vote}', GT='{correct_choice}', Correct={result['correct_count']}/{passes}")
+        print(
+            f"Video {video_id}: Majority='{majority_vote}', GT='{correct_choice}', "
+            f"Correct={result['correct_count']}/{passes}, "
+            f"AvgPassLatency={result['avg_pass_latency_sec']:.3f}s, "
+            f"TotalInference={result['total_inference_time_sec']:.3f}s"
+        )
         return result
 
 
@@ -262,6 +281,17 @@ async def run_async(cfg: DictConfig):
     print(f"Results for {agent_type} on {cfg.dataset.name} with {cfg.inference.passes} passes and {cfg.inference.max_images_per_turn} frames per turn and {cfg.inference.agent_prompt_type} prompt type:")
     total = len(results)
     if total > 0:
+        per_question_totals = [r.get("total_inference_time_sec") for r in results if r.get("total_inference_time_sec") is not None]
+        per_pass_latencies = []
+        for r in results:
+            per_pass_latencies.extend(r.get("pass_latencies_sec", []))
+        if per_question_totals and per_pass_latencies:
+            mean_question_latency = sum(per_question_totals) / len(per_question_totals)
+            mean_pass_latency = sum(per_pass_latencies) / len(per_pass_latencies)
+            print(
+                f"Latency summary: avg_question_total={mean_question_latency:.3f}s, "
+                f"avg_pass={mean_pass_latency:.3f}s, passes={len(per_pass_latencies)}"
+            )
         majority_correct = sum(1 for r in results if r.get("is_majority_correct", False))
         majority_acc = majority_correct / total
         
