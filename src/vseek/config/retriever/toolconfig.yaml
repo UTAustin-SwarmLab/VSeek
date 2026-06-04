@@ -60,7 +60,7 @@ tools:
           enabled: true
         
       retriever:
-        port: 9000
+        port: 9005
         server_url: "http://127.0.0.1:${.port}"
         index_path: "/home/hg22723/vseek/dataset"
         topk: 4
