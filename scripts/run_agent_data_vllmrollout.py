@@ -4,6 +4,7 @@ import os
 import json
 import re
 import math
+import time
 from pathlib import Path
 import glob
 from tqdm import tqdm
@@ -134,6 +135,8 @@ def _load_lvb_examples(
                 "tools_kwargs": tk,
                 "gt": None if gt is None else str(gt),
                 "video_id": metadata.get("video_id"),
+                "question": extra_info.get("question"),
+                "candidates": extra_info.get("candidates"),
             }
         )
         
@@ -157,6 +160,7 @@ def calculate_accuracy(results: list[dict]) -> float:
         return 0.0
     correct = 0
     for r in results:
+        print(r)
         pred = parse_answer(r.get("pred"))
         gt = str(r.get("gt")) if r.get("gt") is not None else ""
         if pred == gt and gt != "":
@@ -295,7 +299,7 @@ def rollout_agent_data(
         rollout_config.actor_rollout_ref.rollout.multi_turn.max_assistant_turns = 2
         rollout_config.actor_rollout_ref.rollout.multi_turn.max_parallel_calls = 4
     else:   
-        rollout_config.actor_rollout_ref.rollout.multi_turn.max_assistant_turns = 3
+        rollout_config.actor_rollout_ref.rollout.multi_turn.max_assistant_turns = 4
         rollout_config.actor_rollout_ref.rollout.multi_turn.max_parallel_calls = 1
         
     rollout_config.actor_rollout_ref.rollout.multi_turn.enable = True
@@ -382,6 +386,8 @@ def rollout_agent_data(
             int(qid): {
                 "video_id": ex.get("video_id"),
                 "gt": ex.get("gt"),
+                "question": ex.get("question"),
+                "candidates": ex.get("candidates"),
             }
             for qid, ex in zip(qids, batch)
         }
@@ -410,12 +416,19 @@ def rollout_agent_data(
         dprompts = dprompts.repeat(rollout_config.actor_rollout_ref.rollout.n, interleave=True)
 
 
+        batch_inference_start = time.perf_counter()
         results = agent_loop_manager.generate_sequences(prompts=dprompts)
+        batch_inference_duration_sec = time.perf_counter() - batch_inference_start
         responses = results.batch["responses"]
         num_turns = results.non_tensor_batch["__num_turns__"]
         results.non_tensor_batch["qid"] = dprompts.non_tensor_batch.pop("qid")
+        timing_summary = results.meta_info.get("timing", {}) if hasattr(results, "meta_info") else {}
+        generate_mean = float(timing_summary.get("agent_loop/generate_sequences/mean", 0.0))
+        tool_calls_mean = float(timing_summary.get("agent_loop/tool_calls/mean", 0.0))
+        qid_pass_counter: dict[int, int] = {}
 
         # Build per-example results and enqueue for write
+        # After repeat(interleave=True), each batch row is duplicated rollout.n times; qid tags each row.
         parsed_results = dict()
         for j, res in enumerate(results):
             pred_text = tokenizer.decode(res.batch["responses"], skip_special_tokens=False)  
@@ -423,16 +436,28 @@ def rollout_agent_data(
             turns = num_turns[j]
             print(f"Parsed pred: {parsed_pred} over {turns} turns")
             qid = int(results.non_tensor_batch["qid"][j])
-            meta = qid_to_meta.get(qid, {"video_id": None, "gt": None})
+            pass_idx = qid_pass_counter.get(qid, 0) + 1
+            qid_pass_counter[qid] = pass_idx
+            step_timing = {
+                "pass_idx": pass_idx,
+                "batch_inference_duration_sec": batch_inference_duration_sec,
+                "agent_generate_sequences_mean_sec": generate_mean,
+                "agent_tool_calls_mean_sec": tool_calls_mean,
+            }
+            meta = qid_to_meta.get(qid, {"video_id": None, "gt": None, "question": None})
             if qid not in parsed_results:
                 if store_preds:
+                    pred_text = tokenizer.decode(res.batch["responses"], skip_special_tokens=True) 
                     parsed_results[qid] = {
                         "video_id": meta["video_id"],
                         "gt": meta["gt"],
                         "pred": [pred_text],
                         "parsed_pred": [parsed_pred],
                         "turns": [str(turns)],
+                        "pass_inference_steps": [step_timing],
                         "qid": qid,
+                        "question": meta.get("question"),
+                        "candidates": meta.get("candidates"),
                     }
                 else:
                     parsed_results[qid] = {
@@ -440,11 +465,15 @@ def rollout_agent_data(
                         "gt": meta["gt"],
                         "parsed_pred": [parsed_pred],
                         "turns": [str(turns)],
+                        "pass_inference_steps": [step_timing],
                         "qid": qid,
+                        "question": meta.get("question"),
+                        "candidates": meta.get("candidates"),
                     }
             else:
                 parsed_results[qid]["parsed_pred"].append(parsed_pred)
                 parsed_results[qid]["turns"].append(str(turns))
+                parsed_results[qid]["pass_inference_steps"].append(step_timing)
                 if store_preds:
                     parsed_results[qid]["pred"].append(pred_text)
         if parsed_results:
@@ -464,6 +493,17 @@ def rollout_agent_data(
             parsed_results[j]["majority_vote"] = majority_vote
             parsed_results[j]["correct_count"] = sum(1 for p in parsed_r["parsed_pred"] if p == parsed_r["gt"])
             parsed_results[j]["is_majority_correct"] = majority_vote == parsed_r["gt"]
+            pass_steps = parsed_results[j].get("pass_inference_steps", [])
+            parsed_results[j]["pass_latencies_sec"] = [
+                step.get("agent_generate_sequences_mean_sec", 0.0) + step.get("agent_tool_calls_mean_sec", 0.0)
+                for step in pass_steps
+            ]
+            if pass_steps:
+                parsed_results[j]["avg_pass_latency_sec"] = sum(parsed_results[j]["pass_latencies_sec"]) / len(pass_steps)
+                parsed_results[j]["total_inference_time_sec"] = sum(parsed_results[j]["pass_latencies_sec"])
+            else:
+                parsed_results[j]["avg_pass_latency_sec"] = None
+                parsed_results[j]["total_inference_time_sec"] = None
         pending_results.extend(parsed_results)
         all_results.extend(parsed_results)
         # Periodic flush to JSONL
@@ -472,10 +512,11 @@ def rollout_agent_data(
                 for r in pending_results:
                     f.write(json.dumps(r, ensure_ascii=False) + "\n")
             pending_results.clear()
-            acc = calculate_accuracy(all_results)
+            # acc = calculate_accuracy(all_results)
             
             # Replace with pass@k analysis
             num_correct = sum(1 for r in all_results if parse_answer(r.get("majority_vote")) == (r.get("gt") or ""))
+            acc = num_correct / len(all_results)
             print(
                 f"[rank {rank}] Progress {start}/{total} | Accuracy: {acc:.3f} ({num_correct}/{len(all_results)})"
             )
