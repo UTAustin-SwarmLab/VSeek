@@ -1,0 +1,70 @@
+
+retriever:
+  port: 9002
+  server_url: "http://127.0.0.1:${retriever.port}"
+  index_path: "/nas/mars/dataset/vseek/dataset"
+  features_path: "/home/gk8373/video_agent/vseek_data/pe_features"
+  topk: 4
+  retriever_name: "UniversalVTG"
+  universalvtg_path: "/home/gk8373/video_agent/universalvtg"
+  experiment_path: "/home/gk8373/video_agent/universalvtg/experiments/universalvtg"
+  checkpoint_name: "best"
+  gpu_number: 0
+  dataset_name: ${..dataset.name}
+  window_size: 8
+  desired_interval_in_sec: 1
+  # VTG model parameters
+  top_k_segments: 5
+  score_thresh: 0.1
+  # Subtitle retrieval harness (BGE text encoder) — fully decoupled from ViClip.
+  # Self-contained per-video index produced by scripts/data_ops/embed_subtitles_bge.py.
+  subtitle:
+    enabled: true
+    encoder_model: "BAAI/bge-base-en-v1.5"
+    query_instruction: "Represent this sentence for searching relevant passages: "
+    index_path: "/home/gk8373/video_agent/vseek_data/subtitle_bge"
+llm:
+  port: 8002
+  server_url: "http://127.0.0.1:${llm.port}/v1"
+  model: "Qwen/Qwen2.5-VL-3B-Instruct"
+  openai_api_key: "EMPTY"
+inference:
+  max_image_width: 256
+  max_image_height: 256
+  image_quality: 90
+  temperature: 0.0
+  topk: 4
+  max_parse_attempts: 3
+  max_reasoning_attempts: 5
+  output_dir: "output"
+  max_images_per_turn: 16
+  gpu_number: 0
+  max_output_tokens: 512
+dataset:
+  name: ["lvb", "videomme", "mlvu"]
+  desired_interval_in_sec: ${retriever.desired_interval_in_sec}
+  window_size: ${retriever.window_size}
+
+  lvb:
+    name: "lvb"
+    dataset_path: "/nas/mars/dataset/longvideobench/LongVideoBench/"
+    burned_path: "/nas/mars/dataset/longvideobench/"
+    enabled: true
+
+  lvbench:
+    name: "lvbench"
+    dataset_path: "/nas/mars/dataset/LVBench"
+    burned_path: "/nas/mars/dataset/LVBench/videos"
+    enabled: true
+
+  videomme:
+    name: "videomme"
+    dataset_path: "/nas/mars/dataset/Video-MME"
+    burned_path: "/nas/mars/dataset/Video-MME/burn-subtitles"
+    enabled: true
+
+  mlvu:
+    name: "mlvu"
+    dataset_path: "/nas/mars/dataset/MLVU/MLVU"
+    burned_path: "/nas/mars/dataset/MLVU/MLVU"
+    enabled: true

@@ -1,0 +1,84 @@
+
+
+inference:
+  max_image_width: 256
+  max_image_height: 256
+  image_quality: 90
+  temperature: 0.5
+  topk: 4
+  max_parse_attempts: 3
+  max_reasoning_attempts: 5
+  output_dir: "output"
+  max_images_per_turn: 16
+  gpu_number: 0
+  max_output_tokens: 512
+
+tools:
+  - class_name: "vseek.tools.search_vtg.VTGSearchTool"
+    config:
+      type: native
+      server_url: ${.retriever.server_url}
+      timeout: 60
+      topk: ${.retriever.topk}
+      dataset_name: ${.retriever.dataset_name}
+      window_size: ${.retriever.window_size}
+      index_path: ${.retriever.index_path}
+      cache_limit: 64
+      max_frames_per_turn: 16
+      dataset:
+        name: ["lvb", "lvbench", "videomme", "mlvu"]
+        desired_interval_in_sec: ${..retriever.desired_interval_in_sec}
+        window_size: ${..retriever.window_size}
+
+        lvb:
+          name: "lvb"
+          dataset_path: "/nas/mars/dataset/longvideobench/LongVideoBench/"
+          burned_path: "/nas/mars/dataset/longvideobench/"
+          enabled: true
+
+        lvbench:
+          name: "lvbench"
+          dataset_path: "/nas/mars/dataset/LVBench"
+          burned_path: "/nas/mars/dataset/LVBench/videos"
+          enabled: true
+
+        videomme:
+          name: "videomme"
+          dataset_path: "/nas/mars/dataset/Video-MME"
+          burned_path: "/nas/mars/dataset/Video-MME/burn-subtitles"
+          enabled: true
+
+        mlvu:
+          name: "mlvu"
+          dataset_path: "/nas/mars/dataset/MLVU"
+          burned_path: "/nas/mars/dataset/MLVU"
+          enabled: true
+
+      retriever:
+        port: 9002
+        server_url: "http://127.0.0.1:${.port}"
+        index_path: "/home/gk8373/video_agent/vseek_data/dataset_pe"
+        features_path: "/home/gk8373/video_agent/vseek_data/pe_features"
+        topk: 4
+        retriever_name: "UniversalVTG"
+        universalvtg_path: "/home/gk8373/video_agent/universalvtg"
+        experiment_path: "/home/gk8373/video_agent/universalvtg/experiments/universalvtg"
+        checkpoint_name: "best"
+        gpu_number: 0
+        dataset_name: ${..dataset.name}
+        window_size: 8
+        desired_interval_in_sec: 1
+        top_k_segments: 5
+        score_thresh: 0.1
+    tool_schema:
+      type: function
+      function:
+        name: video_search
+        description: Searches video for moments relevant to a natural language query using temporal grounding.
+        parameters:
+          type: object
+          properties:
+            query:
+              type: string
+              description: Natural language description of the moment to find in the video.
+          required: [query]

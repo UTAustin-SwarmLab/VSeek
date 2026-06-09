@@ -127,9 +127,10 @@ class VSeekAgent(VLLMClient):
         4. If you can definitively answer the question with the current information, provide the final answer inside <answer> and </answer> tags.
         5. If you need more information to answer the question, issue a precise video search query inside <search> and </search> tags. Your query should help you find the next relevant segment of the video. Ensure that the search query is not too general, long, vague or repeated across turns.
         Each search query should be a concise (1–3 sentences), optimized video search query ONLY if you cannot answer. Include specific entities/objects/ and actions when available.
-        6. Crucially, you must output exactly ONE non empty field from (<answer> or <search>) per turn and a non empty <think> field. Do not provide both and do not provide empty fields.
-        7. You will have access to the history of each turn so far. You can take a maximum of 4 turns to answer the question.
-        8. The options are numbered from 0 to N-1. You MUST answer the question with only one of the option number. You must not provide any other text in the <answer> tag.
+        6. SUBTITLE SEARCH (important): Many questions refer to spoken words. If the question quotes text, refers to what someone "says"/"said"/"mentions"/"asks", or explicitly mentions "subtitle"/"subtitles", you MUST use <search_subtitle> and </search_subtitle> with the EXACT quoted/spoken line as the query — do NOT use <search> for these. <search_subtitle> returns the frames where that line is spoken. Rule of thumb: if the cue is a spoken line or dialogue, use <search_subtitle>; if the cue is a visible object or action, use <search>.
+        7. Crucially, you must output exactly ONE non empty field from (<answer> or <search> or <search_subtitle>) per turn and a non empty <think> field. Do not provide more than one and do not provide empty fields.
+        8. You will have access to the history of each turn so far. You can take a maximum of 4 turns to answer the question.
+        9. The options are numbered from 0 to N-1. You MUST answer the question with only one of the option number. You must not provide any other text in the <answer> tag.
 
         **EXAMPLES**:
         EXAMPLE 1:
@@ -170,6 +171,17 @@ class VSeekAgent(VLLMClient):
         <search>a person wearing tshirtpicking up a red ball in the room</search>
         <think>I have found the event where the person picks up the red ball. The immediate next action is throwing the ball to a dog hence I can answer the question with the option B.</think>
         <answer>1</answer>
+
+        EXAMPLE 4: Subtitle-grounded question (use <search_subtitle>, NOT <search>)
+        Question: What is to the right of the woman in the hat when the subtitle "you're interested in" is spoken? Options: 0. Door, 1. Computer, 2. Lamp, 3. Phone
+
+        Turn 1:
+        <think>The question quotes a spoken line ("you're interested in"), so the cue is dialogue, not a visible object. I must locate where that subtitle is spoken using subtitle search.</think>
+        <search_subtitle>you're interested in</search_subtitle>
+        (After the search, the agent receives frames from the moment that line is spoken: a woman in a hat with a door to her right.)
+        Turn 2:
+        <think>These frames show the moment the subtitle is spoken. To the right of the woman there is a door, so the answer is option 0.</think>
+        <answer>0</answer>
         """
         
         iteration = 0
@@ -181,7 +193,7 @@ class VSeekAgent(VLLMClient):
         total_images=0
         while True:
             if iteration == 0:
-                video_window_idx = 0
+                video_window_idx = [0]
                 user_content = [
                     {
                         "type": "text",

@@ -106,7 +106,16 @@ class VideoFrames(BaseModel):
 
 
     def get_frame_chunk(self, window_idx: int) -> list[np.ndarray]:
-        return self.frames_by_window[window_idx]
+        if window_idx in self.frames_by_window:
+            return self.frames_by_window[window_idx]
+        if not self.frames_by_window:
+            return []
+        # The VTG retriever can return a window index just past the last
+        # available window (off-by-one at the video tail). Clamp to the
+        # valid range rather than crashing the whole run.
+        valid = sorted(self.frames_by_window.keys())
+        clamped = min(max(window_idx, valid[0]), valid[-1])
+        return self.frames_by_window[clamped]
     
     def uniformly_sample_frames(self, num_frames: int) -> list[np.ndarray]:
         if num_frames > len(self.all_frames):
