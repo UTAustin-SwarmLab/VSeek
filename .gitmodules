@@ -1,3 +1,0 @@
-[submodule "vendor/verl"]
-	path = vendor/verl
-	url = https://github.com/UTAustin-SwarmLab/verl.git
