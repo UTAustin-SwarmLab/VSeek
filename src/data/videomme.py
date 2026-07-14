@@ -21,7 +21,7 @@ from data.manager import Manager
 from omegaconf import DictConfig
 from vseek.video.read_video import read_video
 from vseek.video_embedding.video_clip import ViClip
-
+import re
 
 def srt_time_to_seconds(time_str):
     """
@@ -81,7 +81,9 @@ def parse_srt_to_json(srt_path):
                 
                 # Join all remaining lines as text
                 text = '\n'.join(lines[2:]).strip()
-                
+                # Need to remove <font***> and </font>
+                text = re.sub(r'<font.*?>', '', text)
+                text = re.sub(r'</font>', '', text)
                 # Format compatible with LVB's process_subtitles function
                 # Using "timestamp" format: [start, end] in seconds
                 subtitles.append({
@@ -115,6 +117,18 @@ class VideoMME(Manager):
         self.cfg = cfg
         self._dataset_path = cfg.dataset.videomme.dataset_path
         self._burned_path = cfg.dataset.videomme.burned_path
+
+    def _resolve_puls_path(self) -> str | None:
+        configured_path = self.cfg.dataset.videomme.get("puls_json") if self.cfg and self.cfg.get("dataset") else None
+        if configured_path:
+            if os.path.isabs(configured_path):
+                return configured_path
+            return os.path.join(self._dataset_path, configured_path)
+
+        default_path = os.path.join(self._dataset_path, "puls_refined.json")
+        if os.path.exists(default_path):
+            return default_path
+        return None
         
     def load_data(self):
         """
@@ -125,115 +139,122 @@ class VideoMME(Manager):
         """
         category_buckets = defaultdict(list)
         
-        print(f"Loading Video-MME dataset from {self._dataset_path}...")
-        
-        # Try loading from JSON file
-        json_file = os.path.join(self._dataset_path, "videomme", "videomme_val.json")
-        if not os.path.exists(json_file):
-            # Try alternative paths
-            json_file = os.path.join(self._dataset_path, "videomme_val.json")
-        
-        if not os.path.exists(json_file):
-            raise FileNotFoundError(f"Video-MME JSON file not found at {json_file}")
-        
-        with open(json_file, "r") as f:
-            videomme_dataset = json.load(f)
-        
-        print(f"Loaded {len(videomme_dataset)} samples from Video-MME")
-        
-        # Process each item in the dataset
-        for idx, item in enumerate(tqdm(videomme_dataset, desc="Processing Video-MME")):
-            try:
-                # Extract video information
-                video_id = item.get("videoID", item.get("videoID", item.get("id", f"video_{idx}")))
-                question = item.get("question", "")
-                
-                # Handle different answer formats
-                answer = None
-                if "answer" in item:
-                    answer = item["answer"]
-                elif "gt" in item:
-                    answer = item["gt"]
-                elif "correct_choice" in item:
-                    answer = item["correct_choice"]
-                
-                # Handle candidates/options
-                candidates = []
-                if "options" in item:
-                    candidates = item["options"]
-                elif "candidates" in item:
-                    candidates = item["candidates"]
-                elif "choices" in item:
-                    candidates = item["choices"]
-                
-                # Determine paths for video storage
-                video_filename = f"{video_id}.mp4"
-                
-                # Handle different video path formats
-                if not video_filename.endswith(('.mp4', '.avi', '.mov', '.mkv')):
-                    video_filename = f"{video_filename}.mp4"
-                
-                video_save_path = os.path.join(self._dataset_path, "videos/data", video_filename)
-                video_path = os.path.join(self._burned_path, video_filename)
-                # Check if video exists
-                if not os.path.exists(video_save_path) and not os.path.exists(video_path):
-                    print(f"Warning: Video not found for {video_id} at {video_save_path}, skipping...")
-                    continue
-                
-                # Handle subtitles if present (SRT format)
-                subtitle_filename = video_filename.replace('.mp4', '.srt')
-                subtitle_path = os.path.join(self._dataset_path, "subtitles/subtitle", subtitle_filename)
-                
-                subtitle_json_path = None
-                if os.path.exists(subtitle_path):
-                    # Convert SRT to JSON format and save
-                    subtitle_data = parse_srt_to_json(subtitle_path)
+        puls_path = self._resolve_puls_path()
+        if puls_path is not None:
+            print(f"Loading Video-MME dataset from {puls_path}")
+            with open(puls_path, "r") as f:
+                dataset = json.load(f)
+            return dataset
+        else:
+            print(f"Loading Video-MME dataset from {self._dataset_path}...")
+            
+            # Try loading from JSON file
+            json_file = os.path.join(self._dataset_path, "videomme", "videomme_val.json")
+            if not os.path.exists(json_file):
+                # Try alternative paths
+                json_file = os.path.join(self._dataset_path, "videomme_val.json")
+            
+            if not os.path.exists(json_file):
+                raise FileNotFoundError(f"Video-MME JSON file not found at {json_file}")
+            
+            with open(json_file, "r") as f:
+                videomme_dataset = json.load(f)
+            
+            print(f"Loaded {len(videomme_dataset)} samples from Video-MME")
+            
+            # Process each item in the dataset
+            for idx, item in enumerate(tqdm(videomme_dataset, desc="Processing Video-MME")):
+                try:
+                    # Extract video information
+                    video_id = item.get("videoID", item.get("videoID", item.get("id", f"video_{idx}")))
+                    question = item.get("question", "")
                     
-                    # Save as JSON for future use
-                    subtitle_json_path = os.path.join(
-                        self._dataset_path, "subtitles_json", f"{video_id}.json"
-                    )
-                    os.makedirs(os.path.dirname(subtitle_json_path), exist_ok=True)
-                    with open(subtitle_json_path, "w") as f:
-                        json.dump(subtitle_data, f, indent=2)
-                else:
+                    # Handle different answer formats
+                    answer = None
+                    if "answer" in item:
+                        answer = item["answer"]
+                    elif "gt" in item:
+                        answer = item["gt"]
+                    elif "correct_choice" in item:
+                        answer = item["correct_choice"]
+                    
+                    # Handle candidates/options
+                    candidates = []
+                    if "options" in item:
+                        candidates = item["options"]
+                    elif "candidates" in item:
+                        candidates = item["candidates"]
+                    elif "choices" in item:
+                        candidates = item["choices"]
+                    
+                    # Determine paths for video storage
+                    video_filename = f"{video_id}.mp4"
+                    
+                    # Handle different video path formats
+                    if not video_filename.endswith(('.mp4', '.avi', '.mov', '.mkv')):
+                        video_filename = f"{video_filename}.mp4"
+                    
+                    video_save_path = os.path.join(self._dataset_path, "videos/data", video_filename)
+                    video_path = os.path.join(self._burned_path, video_filename)
+                    # Check if video exists
+                    if not os.path.exists(video_save_path) and not os.path.exists(video_path):
+                        print(f"Warning: Video not found for {video_id} at {video_save_path}, skipping...")
+                        continue
+                    
+                    # Handle subtitles if present (SRT format)
+                    subtitle_filename = video_filename.replace('.mp4', '.srt')
+                    subtitle_path = os.path.join(self._dataset_path, "subtitles/subtitle", subtitle_filename)
+                    
                     subtitle_json_path = None
-                
-                # Determine category
-                category = item.get("category", item.get("task_type", item.get("domain", "general")))
-                
-                # Build entry in LVB-compatible format
-                question_text = "\n This is a multiple choice question. You must choose the correct answer from the options with the number or letter of the option. \n"
-                question_text += f"Question: {question} \n"
-                
-                entry = {
-                    "question": question_text,
-                    "candidates": candidates,
-                    "correct_choice": answer,
-                    "paths": {
-                        "raw_video_path": video_save_path,
-                        "subtitle_path": subtitle_json_path,
-                        "video_path": video_path,
-                    },
-                    "metadata": {
-                        "video_id": video_id,
-                        "id": item.get("question_id", video_id),
-                        "original_data": json.dumps(item),
-                    },
-                }
-                
-                category_buckets[category].append(entry)
-                
-            except Exception as e:
-                print(f"Error processing item {idx}: {e}")
-                print(traceback.format_exc())
-                continue
-        
-        # Flatten list of all entries from each category
-        all_entries = [entry for entries in category_buckets.values() for entry in entries]
-        print(f"Successfully processed {len(all_entries)} entries across {len(category_buckets)} categories")
-        
-        return all_entries
+                    if os.path.exists(subtitle_path):
+                        # Convert SRT to JSON format and save
+                        subtitle_data = parse_srt_to_json(subtitle_path)
+                        
+                        # Save as JSON for future use
+                        subtitle_json_path = os.path.join(
+                            self._dataset_path, "subtitles_json", f"{video_id}.json"
+                        )
+                        os.makedirs(os.path.dirname(subtitle_json_path), exist_ok=True)
+                        with open(subtitle_json_path, "w") as f:
+                            json.dump(subtitle_data, f, indent=2)
+                    else:
+                        subtitle_json_path = None
+                    
+                    # Determine category
+                    category = item.get("category", item.get("task_type", item.get("domain", "general")))
+                    
+                    # Build entry in LVB-compatible format
+                    question_text = "\n This is a multiple choice question. You must choose the correct answer from the options with the number or letter of the option. \n"
+                    question_text += f"Question: {question} \n"
+                    
+                    entry = {
+                        "question": question_text,
+                        "candidates": candidates,
+                        "correct_choice": answer,
+                        "paths": {
+                            "raw_video_path": video_save_path,
+                            "subtitle_path": subtitle_json_path,
+                            "video_path": video_path,
+                        },
+                        "metadata": {
+                            "video_id": str(video_id),
+                            "id": str(item.get("question_id", video_id)),
+                            "original_data": json.dumps(item),
+                        },
+                    }
+                    
+                    category_buckets[category].append(entry)
+                    
+                except Exception as e:
+                    print(f"Error processing item {idx}: {e}")
+                    print(traceback.format_exc())
+                    continue
+            
+            # Flatten list of all entries from each category
+            all_entries = [entry for entries in category_buckets.values() for entry in entries]
+            print(f"Successfully processed {len(all_entries)} entries across {len(category_buckets)} categories")
+            
+            return all_entries
     
     def save_it_as_vseek_data(self, desired_interval_in_sec: int = 1):
         """
@@ -272,9 +293,9 @@ class VideoMME(Manager):
                     unique_id = entry["metadata"]["video_id"]
                     
                     # Fast skip if already processed on disk
-                    if self.is_file_exists(window_size, unique_id):
-                        print(f"Skipping already processed video: {unique_id}")
-                        return
+                    # if self.is_file_exists(window_size, unique_id):
+                    #     print(f"Skipping already processed video: {unique_id}")
+                    #     return
                     
                     # Prevent duplicate work in this process
                     with processed_lock:
@@ -324,7 +345,7 @@ class VideoMME(Manager):
                         
                         all_subtitles = process_subtitles(
                             subtitles,
-                            entry["metadata"]["starting_timestamp_for_subtitles"],
+                            0,
                             original_fps,
                             original_frame_count,
                             original_duration,

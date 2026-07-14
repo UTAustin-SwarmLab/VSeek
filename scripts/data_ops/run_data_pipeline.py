@@ -2,7 +2,7 @@ from data.lvb import LongVideoBench
 from data.lvbench import LVBench
 from data.videomme import VideoMME
 from data.mlvu import MLVU
-
+from data.cgbench import CGBench
 import hydra
 from omegaconf import DictConfig
 
@@ -20,6 +20,9 @@ def main(cfg: DictConfig):
         dataset.save_it_as_vseek_data(desired_interval_in_sec=cfg.dataset.desired_interval_in_sec)
     elif cfg.dataset.name == "mlvu":
         dataset = MLVU(cfg)
+        dataset.save_it_as_vseek_data(desired_interval_in_sec=cfg.dataset.desired_interval_in_sec)
+    elif cfg.dataset.name == "cgbench":
+        dataset = CGBench(cfg)
         dataset.save_it_as_vseek_data(desired_interval_in_sec=cfg.dataset.desired_interval_in_sec)
     # dataset.fix_subtitle_embeddings()
 

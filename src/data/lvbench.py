@@ -80,116 +80,122 @@ class LVBench(Manager):
         #             "2. Local JSON file at {}/lvbench_test.json".format(self._dataset_path)
         #         )
         
-        with open(os.path.join(self._dataset_path, "data/lvbench_val.json"), "r") as f:
-            lvbench_dataset = json.load(f)
-        
-        print(f"Loaded {len(lvbench_dataset)} samples from LVBench")
-        
-        # Process each item in the dataset
-        for idx, item in enumerate(tqdm(lvbench_dataset, desc="Processing LVBench")):
-            try:
-                # Extract video information
-                video_id = item.get("key", item.get("id", f"video_{idx}"))
-                question = item.get("question", "")
-                
-                # Handle different answer formats
-                if "answer" in item:
-                    answer = item["answer"]
-                elif "gt" in item:
-                    answer = item["gt"]
-                elif "correct_choice" in item:
-                    answer = item["correct_choice"]
-                else:
-                    answer = None
-                
-                # candiadates in the question, we need to split the string
-
-                question_parts = question.split("\n")
-                question = question_parts[0]
-                options = question_parts[1:]
-                candidates = item.get("candidates", item.get("options", options))
-
-                # question, options = question.split("\n")
-              
-                
-                # print(f"question: {question}")
-                # print(f"candidates: {candidates}")
-
-
-                # Handle candidates/options
-                # candidates = item.get("candidates", item.get("options", []))
-                
-                # Determine paths for video storage
-                video_filename = item.get("video", item.get("video_path", f"{video_id}.mp4"))
-                video_save_path = os.path.join(
-                    self._dataset_path, "videos", video_filename
-                )
-                
-                # Download or copy video if needed
-                if not os.path.exists(video_save_path):
-                    os.makedirs(os.path.dirname(video_save_path), exist_ok=True)
-                    # If video URL is provided, download it
-                    if "video_url" in item:
-                        self._download_video(item["video_url"], video_save_path)
-                    # If video data is embedded (base64), decode it
-                    elif "video_data" in item:
-                        self._decode_video(item["video_data"], video_save_path)
+        if os.path.exists(os.path.join(self._dataset_path, "puls_refined.json")):
+            print(f"Loading LVBench dataset from {os.path.join(self._dataset_path, 'puls_refined.json')}")
+            with open(os.path.join(self._dataset_path, "puls_refined.json"), "r") as f:
+                dataset = json.load(f)
+            return dataset
+        else:
+            with open(os.path.join(self._dataset_path, "data/lvbench_val.json"), "r") as f:
+                lvbench_dataset = json.load(f)
+            
+            print(f"Loaded {len(lvbench_dataset)} samples from LVBench")
+            
+            # Process each item in the dataset
+            for idx, item in enumerate(tqdm(lvbench_dataset, desc="Processing LVBench")):
+                try:
+                    # Extract video information
+                    video_id = item.get("key", item.get("id", f"video_{idx}"))
+                    question = item.get("question", "")
+                    
+                    # Handle different answer formats
+                    if "answer" in item:
+                        answer = item["answer"]
+                    elif "gt" in item:
+                        answer = item["gt"]
+                    elif "correct_choice" in item:
+                        answer = item["correct_choice"]
                     else:
-                        print(f"Warning: Video not found for {video_id}, skipping...")
-                        continue
+                        answer = None
+                    
+                    # candiadates in the question, we need to split the string
+
+                    question_parts = question.split("\n")
+                    question = question_parts[0]
+                    options = question_parts[1:]
+                    candidates = item.get("candidates", item.get("options", options))
+
+                    # question, options = question.split("\n")
                 
-                # Handle subtitles if present
-                subtitle_path = None
-                if "subtitles" in item or "subtitle" in item:
-                    subtitle_data = item.get("subtitles", item.get("subtitle", []))
-                    subtitle_save_path = os.path.join(
-                        self._dataset_path, "subtitles", f"{video_id}.json"
+                    
+                    # print(f"question: {question}")
+                    # print(f"candidates: {candidates}")
+
+
+                    # Handle candidates/options
+                    # candidates = item.get("candidates", item.get("options", []))
+                    
+                    # Determine paths for video storage
+                    video_filename = item.get("video", item.get("video_path", f"{video_id}.mp4"))
+                    video_save_path = os.path.join(
+                        self._dataset_path, "videos", video_filename
                     )
-                    os.makedirs(os.path.dirname(subtitle_save_path), exist_ok=True)
-                    with open(subtitle_save_path, "w") as f:
-                        json.dump(subtitle_data, f)
-                    subtitle_path = subtitle_save_path
-                
-                # Determine category
-                category = item.get("category", item.get("task_type", "general"))
-                
-                # Build entry in LVB-compatible format
-                question_text = "\n This is a multiple choice question. You must choose the correct answer from the options with the number or letter of the option. \n"
-                question_text += f"Question: {question} \n"
-                
-                # TODO: Add ground truth frames
-                
-                entry = {
-                    "question": question_text,
-                    "candidates": candidates,
-                    "correct_choice": answer,
-                    "ground_truth_frames": item.get("ground_truth_frames", []),
-                    "paths": {
-                        "raw_video_path": video_save_path,
-                        "subtitle_path": subtitle_path,
-                        "video_path": video_save_path,  # Same as raw for now
-                    },
-                    "metadata": {
-                        "video_id": video_id,
-                        "id": item.get("uid", video_id),
-                        # Store original item for reference
-                        "original_data": json.dumps(item),
-                    },
-                }
-                
-                category_buckets[category].append(entry)
-                
-            except Exception as e:
-                print(f"Error processing item {idx}: {e}")
-                print(traceback.format_exc())
-                print(f"entry: {item}")
-                continue
-        
-        # Flatten list of all entries from each category
-        all_entries = [entry for entries in category_buckets.values() for entry in entries]
-        print(f"Successfully processed {len(all_entries)} entries across {len(category_buckets)} categories")
-        
-        return all_entries
+                    
+                    # Download or copy video if needed
+                    if not os.path.exists(video_save_path):
+                        os.makedirs(os.path.dirname(video_save_path), exist_ok=True)
+                        # If video URL is provided, download it
+                        if "video_url" in item:
+                            self._download_video(item["video_url"], video_save_path)
+                        # If video data is embedded (base64), decode it
+                        elif "video_data" in item:
+                            self._decode_video(item["video_data"], video_save_path)
+                        else:
+                            print(f"Warning: Video not found for {video_id}, skipping...")
+                            continue
+                    
+                    # Handle subtitles if present
+                    subtitle_path = None
+                    if "subtitles" in item or "subtitle" in item:
+                        subtitle_data = item.get("subtitles", item.get("subtitle", []))
+                        subtitle_save_path = os.path.join(
+                            self._dataset_path, "subtitles", f"{video_id}.json"
+                        )
+                        os.makedirs(os.path.dirname(subtitle_save_path), exist_ok=True)
+                        with open(subtitle_save_path, "w") as f:
+                            json.dump(subtitle_data, f)
+                        subtitle_path = subtitle_save_path
+                    
+                    # Determine category
+                    category = item.get("category", item.get("task_type", "general"))
+                    
+                    # Build entry in LVB-compatible format
+                    question_text = "\n This is a multiple choice question. You must choose the correct answer from the options with the number or letter of the option. \n"
+                    question_text += f"Question: {question} \n"
+                    
+                    # TODO: Add ground truth frames
+                    
+                    entry = {
+                        "question": question_text,
+                        "candidates": candidates,
+                        "correct_choice": answer,
+                        "ground_truth_frames": item.get("ground_truth_frames", []),
+                        "paths": {
+                            "raw_video_path": video_save_path,
+                            "subtitle_path": subtitle_path,
+                            "video_path": video_save_path,  # Same as raw for now
+                        },
+                        "metadata": {
+                            "video_id": str(video_id),
+                            "id": str(item.get("uid", video_id)),
+                            # Store original item for reference
+                            "original_data": json.dumps(item),
+                        },
+                    }
+                    
+                    category_buckets[category].append(entry)
+                    
+                except Exception as e:
+                    print(f"Error processing item {idx}: {e}")
+                    print(traceback.format_exc())
+                    print(f"entry: {item}")
+                    continue
+            
+            # Flatten list of all entries from each category
+            all_entries = [entry for entries in category_buckets.values() for entry in entries]
+            print(f"Successfully processed {len(all_entries)} entries across {len(category_buckets)} categories")
+            
+            return all_entries
     
     def _download_video(self, url: str, save_path: str):
         """

@@ -1,6 +1,6 @@
 
 retriever:
-  port: 9000
+  port: 9005
   server_url: "http://127.0.0.1:${retriever.port}"
   index_path: "/home/hg22723/vseek/dataset"
   topk: 1
@@ -63,6 +63,12 @@ dataset:
     name: "mlvu"
     dataset_path: "/nas/mars/dataset/MLVU/MLVU"
     burned_path: "/nas/mars/dataset/MLVU/MLVU"
+    enabled: true
+
+  cgbench:
+    name: "cgbench"
+    dataset_path: "/nas/mars/dataset/CGBench"
+    burned_path: "/nas/mars/dataset/CGBench/burn-subtitles"
     enabled: true
   
   

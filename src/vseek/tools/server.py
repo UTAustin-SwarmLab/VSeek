@@ -12,6 +12,7 @@ from omegaconf import DictConfig
 
 from data.videomme import VideoMME
 from data.lvbench import LVBench
+from data.cgbench import CGBench
 from data.mlvu import MLVU
 from vseek.video_embedding.video_clip import ViClip
 from data.lvb import LongVideoBench
@@ -74,6 +75,9 @@ class VideoSearchServer:
             elif dataset_name == "mlvu":
                 dataset = MLVU(args)
                 self.entries[dataset_name] = dataset.load_data()
+            elif dataset_name == "cgbench":
+                dataset = CGBench(args)
+                self.entries[dataset_name] = dataset.load_data()
             else:
                 raise ValueError(f"Unsupported dataset: {dataset_name}")
         
@@ -115,24 +119,36 @@ class VideoSearchServer:
             # Deduplicate
             to_load = list(set(to_load))
             
-            # Thread-safe loading function
+            # Thread-safe loading function - load only what we need directly
             def _load_single_video(video_id):
                 try:
-                    pkl_path = data_root.joinpath(f"{video_id}")
+                    base_dir = data_root.joinpath(f"{video_id}")
                     
-                    if not pkl_path.exists():
-                        logger.warning(f"Missing preprocessed frames: {pkl_path}")
+                    if not base_dir.exists():
+                        logger.warning(f"Missing preprocessed frames: {base_dir}")
                         return None
                     
-                    # Load data
-                    video_frames = VideoFrames.load(str(pkl_path))
+                    # Load only embeddings and metadata directly (skip VideoFrames entirely)
+                    result = {"video_id": video_id, "embeddings": {}, "subtitles": {}, "subtitle_embeddings": {}}
                     
-                    return {
-                        "video_id": video_id,
-                        "embeddings": video_frames.embeddings,
-                        "subtitles": video_frames.window_by_subtitle,
-                        "subtitle_embeddings": video_frames.subtitle_embeddings
-                    }
+                    # Load embeddings
+                    embeddings_file = base_dir / "embeddings.pt"
+                    if embeddings_file.exists():
+                        result["embeddings"] = torch.load(embeddings_file, map_location="cpu")
+                    
+                    # Load subtitle embeddings
+                    subtitle_embeddings_file = base_dir / "subtitle_embeddings.pt"
+                    if subtitle_embeddings_file.exists():
+                        result["subtitle_embeddings"] = torch.load(subtitle_embeddings_file, map_location="cpu")
+                    
+                    # Load window_by_subtitle from metadata
+                    metadata_file = base_dir / "metadata.json"
+                    if metadata_file.exists():
+                        with open(metadata_file, "r") as f:
+                            metadata = json.load(f)
+                        result["subtitles"] = metadata.get("window_by_subtitle", {})
+                        
+                    return result
                 except Exception as e:
                     logger.error(f"Failed to load video {video_id}: {e}")
                     print(traceback.format_exc())
@@ -173,12 +189,17 @@ class VideoSearchServer:
                 topk = int(request.args.get("topk", self.topk))
                 video_id = request.args.get("video_id")
                 dataset_name = request.args.get("dataset_name")
+                puls = request.args.get("puls", None)
             else:  # POST
                 data = request.get_json()
                 query = data.get("query")
                 topk = data.get("topk", self.topk)
                 video_id = data.get("video_id")
                 dataset_name = data.get("dataset_name")
+                puls = data.get("puls", None)
+            
+            if isinstance(puls, str):
+                puls = json.loads(puls)
             if not query:
                 return jsonify({"error": "Query parameter is required"}), 400
             
@@ -233,6 +254,31 @@ class VideoSearchServer:
             frame_indices = sorted_indices.cpu().tolist()[:topk]
             window_indices = [visual_embeddings_keys[i] for i in frame_indices]
             # Return frame indices in ascending order
+            proposition_existence = {}
+            if puls is not None:
+                proposition = puls.get("proposition", [])
+                proposition_existence = {prop: 0 for prop in proposition}
+                
+                
+                for prop in proposition:
+                    if 'subtitle_' in prop:
+                        if query in prop:
+                            proposition_existence[prop] = 1
+                    else:
+                        
+                        prop_embedding = self.retriever.get_text_embedding(prop).squeeze()
+                        prop_embedding = prop_embedding / prop_embedding.norm(dim=-1, keepdim=True)
+                        prop_embedding = prop_embedding.to(device)
+                        # get the visual embeddings corresponding to the retrieved windows
+                        visual_embeddings = [self.video_embeddings[dataset_name][video_id][window] for window in window_indices]
+                        visual_embeddings = torch.stack(visual_embeddings)
+                        visual_embeddings = visual_embeddings / visual_embeddings.norm(dim=-1, keepdim=True)
+                        visual_embeddings = visual_embeddings.to(device)
+                        # Compute cosine similarities on GPU
+                        similarities = torch.matmul(visual_embeddings, prop_embedding)
+                        proposition_existence[prop] = torch.max(similarities).item()
+                
+                
             
             response_data = {
                 "query": query,
@@ -243,15 +289,17 @@ class VideoSearchServer:
                 "metadata": {
                     "search_type": "video_frames",
                     "status": "success"
-                }
+                },
+                "puls": proposition_existence
             }
             
             return jsonify(response_data)
 
         except Exception as e:
             logger.error(f"Search failed: {str(e)}")
+            traceback.print_exc()
             return jsonify({"error": f"Search failed: {str(e)}"}), 500
-    
+        
     def search_subtitle(self):
         """Search for the most similar subtitle to the text query.
 
@@ -265,12 +313,18 @@ class VideoSearchServer:
                 topk = int(request.args.get("topk"))
                 video_id = request.args.get("video_id")
                 dataset_name = request.args.get("dataset_name")
+                puls = request.args.get("puls", None)
             else:  # POST
                 data = request.get_json()
                 query = data.get("query")
                 topk = data.get("topk")
                 video_id = data.get("video_id")
                 dataset_name = data.get("dataset_name")
+                puls = data.get("puls", None)
+            
+            if isinstance(puls, str):
+                puls = json.loads(puls)
+                
             if not query:
                 return jsonify({"error": "Query parameter is required"}), 400
             
@@ -335,10 +389,10 @@ class VideoSearchServer:
             similarities = torch.matmul(subtitle_embeddings_tensor, text_embedding)
 
             # Get indices sorted by similarity (descending order)
-            print(f"similarities: {similarities}")
-            print(f"sorted similarities: {torch.sort(similarities, descending=True)}")
+            #print(f"similarities: {similarities}")
+            #print(f"sorted similarities: {torch.sort(similarities, descending=True)}")
             sorted_indices = torch.argsort(similarities, descending=True)
-            print(f"sorted indices: {sorted_indices}")
+            #print(f"sorted indices: {sorted_indices}")
             sorted_indices = sorted_indices.cpu().tolist()
             total_windows_retrieved = 0
             windows_retrieved = []
@@ -356,6 +410,33 @@ class VideoSearchServer:
 
             # Return top-k results
             
+            # puls related processings
+            proposition_existence = {}
+            if puls is not None:
+                proposition = puls.get("proposition", [])
+                proposition_existence = {prop: 0 for prop in proposition}
+                
+                
+                for prop in proposition:
+                    if 'subtitle_' in prop:
+                        if query in prop:
+                            proposition_existence[prop] = 1.
+                    else:
+                        
+                        prop_embedding = self.retriever.get_text_embedding(prop).squeeze()
+                        prop_embedding = prop_embedding / prop_embedding.norm(dim=-1, keepdim=True)
+                        prop_embedding = prop_embedding.to(device)
+                        # get the visual embeddings corresponding to the retrieved windows
+                        visual_embeddings = [self.video_embeddings[dataset_name][video_id][window] for window in windows_retrieved]
+                        visual_embeddings = torch.stack(visual_embeddings)
+                        visual_embeddings = visual_embeddings / visual_embeddings.norm(dim=-1, keepdim=True)
+                        visual_embeddings = visual_embeddings.to(device)
+                        # Compute cosine similarities on GPU
+                        similarities = torch.matmul(visual_embeddings, prop_embedding)
+
+                        proposition_existence[prop] = torch.max(similarities).item()
+            
+            
             response_data = {
                 "query": query,
                 "subtitle_indices": windows_retrieved,
@@ -365,8 +446,9 @@ class VideoSearchServer:
                 "closest_subtitles": closest_subtitles,
                 "metadata": {
                     "search_type": "subtitles",
-                    "status": "success"
-                }
+                    "status": "success",
+                },
+                "puls": proposition_existence
             }
             
             return jsonify(response_data)

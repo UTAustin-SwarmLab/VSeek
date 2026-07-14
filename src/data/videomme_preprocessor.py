@@ -27,7 +27,7 @@ import base64
 from verl.utils.hdfs_io import copy, makedirs
 from data.videomme import VideoMME
 from vseek.data.frame import VideoFrames
-from data.prompts.prompts import tagbased, openaitooluse, tagbasedsummary
+from data.prompts.prompts import tagbased, openaitooluse, tagbasedsummary, fanout
 
 
 
@@ -54,10 +54,12 @@ def build_prompt(args, entry: dict) -> list[dict]:
         system_prompt = openaitooluse.system_prompt
     elif args.prompt_type == "tagsummary":
         system_prompt = tagbasedsummary.system_prompt
+    elif args.prompt_type == "fanout":
+        system_prompt = fanout.system_prompt
     else:
         raise ValueError(f"Invalid prompt type: {args.prompt_type}")
     
-    messages = [
+    messages   = [
         {
             "role": "system",
             "content": system_prompt
@@ -79,7 +81,7 @@ def _encode_frame(frame, max_side: int, quality: int) -> str:
     ret, buffer = cv2.imencode(".jpg", frame, encode_params)
     if not ret:
         raise ValueError("Could not encode frame")
-    return base64.b64encode(buffer).decode("utf-8")
+    return buffer.tobytes()
 
 
 if __name__ == "__main__":
@@ -168,6 +170,12 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--puls_json",
+        type=str,
+        default="puls_refined.json",
+        help="PULS JSON filename/path to load (e.g. puls_direct.json).",
+    )
+    parser.add_argument(
         "--gpu_number",
         type=int,
         default=0,
@@ -194,6 +202,7 @@ if __name__ == "__main__":
             "videomme": {
                 "dataset_path": local_dataset_path,
                 "burned_path": args.burned_path,
+                "puls_json": args.puls_json,
             },
         },
         "retriever": {
@@ -302,7 +311,7 @@ if __name__ == "__main__":
                         "index": idx,
                         "question": entry.get("question", ""),
                         "candidates": entry.get("candidates", []),
-                        "correct_choice": correct_choice,
+                        "correct_choice": str(correct_choice),
                         "metadata": entry.get("metadata", {}),
                         "paths": {
                             "raw_video_path": entry.get("paths", {}).get("raw_video_path"),
@@ -313,8 +322,9 @@ if __name__ == "__main__":
                             "video_search": {
                                 "execute_kwargs": {
                                     "topk": 4,
-                                    "video_id": entry.get("metadata", {}).get("video_id"),
+                                    "video_id": str(entry.get("metadata", {}).get("video_id")),
                                     "dataset": "videomme",
+                                    "puls": entry.get("puls", {}),
                                 },
                             },
                         },

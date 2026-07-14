@@ -241,7 +241,10 @@ def main():
         # Construct paths relative to data folder
         json_path = os.path.join(args.data_folder, args.json_file)
         video_base_dir = os.path.join(args.data_folder, "videos")
-        subtitle_base_dir = os.path.join(args.data_folder, "subtitles")
+        if 'cgbench' in json_path:
+            subtitle_base_dir = os.path.join(args.data_folder, "cg_subtitles")
+        else:
+            subtitle_base_dir = os.path.join(args.data_folder, "subtitles")
         
         if not os.path.exists(json_path):
             print(f"Error: JSON file not found: {json_path}")
@@ -268,6 +271,13 @@ def main():
                     data[j]["subtitle_path"] = "subtitle/"+item["videoID"]+".srt"
                 elif 'lvb' in json_path:
                     pair = (item["video_id"], item["subtitle_path"])
+                elif 'cgbench' in json_path:
+                    
+                    pair = (item["video_uid"], item["video_uid"])
+                    data[j]["video_id"] = item["video_uid"]
+                    data[j]["video_path"] = item["video_uid"]+".mp4"
+                    data[j]["subtitle_path"] = item["video_uid"]+".srt"
+                
             except KeyError:
                 continue
             if pair in seen_pairs:

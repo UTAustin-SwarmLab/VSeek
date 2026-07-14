@@ -2,21 +2,40 @@
 
 # Default values
 DEVICE=0
-MODEL="Qwen/Qwen3-VL-4B-Thinking"
+# MODEL="Qwen/Qwen3-VL-4B-Thinking"
+MODEL="OpenGVLab/InternVL3_5-4B"
+# Optional model name to send in chat/completions.
+# Leave empty to use MODEL (recommended for external vLLM to avoid 404 mismatches).
+REQUEST_MODEL=""
 FRAMES=64
-OUTPUT_DIR="results/uniform_vllm"
-DATASETS=("lvb" "lvbench" "videomme")
+OUTPUT_DIR="results/uniform_vllm2"
+DATASETS="lvb videomme mlvu lvbench cgbench"
 PROMPT_TYPE="cot"
-
+SERVER_PORT=8002
+SERVER_HOST="localhost"
+USE_EXTERNAL_VLLM=0
+PASSES=4
+TEMPERATURE=0.7
+BATCH_SIZE=16
+IMAGE_QUALITY=90
+MAX_IMAGE_WIDTH=256
+MAX_IMAGE_HEIGHT=256
+MAX_MM_CACHE_RESTARTS=3
+RESTART_SLEEP_SECONDS=5
+MM_CACHE_ERROR_PATTERN="AssertionError: Expected a cached item for mm_hash="
 # Parse command line arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
+while [ $# -gt 0 ]; do
+    case "$1" in
         -d|--device)
             DEVICE="$2"
             shift 2
             ;;
         -m|--model)
             MODEL="$2"
+            shift 2
+            ;;
+        --request-model)
+            REQUEST_MODEL="$2"
             shift 2
             ;;
         -f|--frames)
@@ -28,16 +47,53 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --datasets)
-            # Read remaining arguments as datasets until a flag is found
             shift
-            DATASETS=()
-            while [[ $# -gt 0 && ! "$1" =~ ^- ]]; do
-                DATASETS+=("$1")
-                shift
+            DATASETS=""
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    -*) break ;;
+                    *) DATASETS="$DATASETS $1"; shift ;;
+                esac
             done
             ;;
         --prompt-type)
             PROMPT_TYPE="$2"
+            shift 2
+            ;;
+        --vllm-port)
+            SERVER_PORT="$2"
+            shift 2
+            ;;
+        --vllm-host)
+            SERVER_HOST="$2"
+            shift 2
+            ;;
+        --external-vllm)
+            USE_EXTERNAL_VLLM=1
+            shift
+            ;;
+        --batch-size)
+            BATCH_SIZE="$2"
+            shift 2
+            ;;
+        --image-quality)
+            IMAGE_QUALITY="$2"
+            shift 2
+            ;;
+        --max-image-width)
+            MAX_IMAGE_WIDTH="$2"
+            shift 2
+            ;;
+        --max-image-height)
+            MAX_IMAGE_HEIGHT="$2"
+            shift 2
+            ;;
+        --temperature)
+            TEMPERATURE="$2"
+            shift 2
+            ;;
+        --passes)
+            PASSES="$2"
             shift 2
             ;;
         -h|--help)
@@ -45,10 +101,18 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  -d, --device ID       GPU device ID (default: 0)"
             echo "  -m, --model PATH      Model path or HF ID (default: Qwen/Qwen3-VL-4B-Thinking)"
+            echo "  --request-model NAME  Model name sent to /chat/completions (default: --model)"
             echo "  -f, --frames N        Max frames per turn (default: 64)"
             echo "  -o, --output-dir DIR  Output directory (default: results/uniform_vllm)"
+            echo "  --vllm-port PORT      Port for vLLM server (default: 8002)"
+            echo "  --vllm-host HOST      Host for external vLLM server (default: localhost)"
+            echo "  --external-vllm       Use external OpenAI-compatible vLLM server"
             echo "  --datasets NAMES      Space-separated list of datasets (default: lvb lvbench videomme)"
             echo "  --prompt-type TYPE    Agent prompt type: base or cot (default: cot)"
+            echo "  --passes N            Number of passes per question (default: 4)"
+            echo "  --image-quality Q     JPEG quality 1-100 for encoded frames (default: 90)"
+            echo "  --max-image-width W   Frame resize max width before encoding (default: 256)"
+            echo "  --max-image-height H  Frame resize max height before encoding (default: 256)"
             exit 0
             ;;
         *)
@@ -58,35 +122,109 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Export VLLM environment variable
+# Start vLLM server in background
+echo "Using vLLM endpoint http://$SERVER_HOST:$SERVER_PORT/v1 (external=$USE_EXTERNAL_VLLM)"
+
+export CUDA_DEVICE_ORDER="PCI_BUS_ID"
+export NCCL_P2P_DISABLE=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export VLLM_USE_V1=1
 
-echo "========================================================"
-echo "Running Uniform Agent Evaluation with VLLM"
-echo "Device: $DEVICE"
-echo "Model: $MODEL"
-echo "Frames per turn: $FRAMES"
-echo "Output Dir: $OUTPUT_DIR"
-echo "Datasets: ${DATASETS[*]}"
-echo "Prompt Type: $PROMPT_TYPE"
-echo "========================================================"
+# Global export to ensure vLLM and children see only this GPU as GPU 0
+export CUDA_VISIBLE_DEVICES=$DEVICE
+MODEL_NAME=${MODEL##*/}
+RUN_TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+if [ -n "$REQUEST_MODEL" ]; then
+    EFFECTIVE_MODEL="$REQUEST_MODEL"
+else
+    EFFECTIVE_MODEL="$MODEL"
+fi
+if [ "$USE_EXTERNAL_VLLM" -eq 1 ]; then
+    EXTERNAL_VLLM_BOOL=true
+    ENGINE_NAME=external_vllm
+else
+    EXTERNAL_VLLM_BOOL=false
+    ENGINE_NAME=vllm
+fi
 
-for DATASET in "${DATASETS[@]}"; do
+# notify.py "Starting experiment $MODEL on $DEVICE with datasets $DATASETS"
+
+for DATASET in $DATASETS; do
     echo "Processing dataset: $DATASET"
     
     # Construct specific output dir for this run configuration
-    # You can adjust this naming scheme as preferred
-    RUN_OUTPUT_DIR="${OUTPUT_DIR}/${DATASET}_f${FRAMES}"
+    RUN_OUTPUT_DIR="${OUTPUT_DIR}/${DATASET}/${PROMPT_TYPE}/f${FRAMES}/${MODEL_NAME}"
+    mkdir -p "$RUN_OUTPUT_DIR"
+    RUN_LOG_FILE="${RUN_OUTPUT_DIR}/run_${RUN_TIMESTAMP}.log"
     
     echo "Running command..."
-    CUDA_VISIBLE_DEVICES=$DEVICE python3 scripts/run_uniform_agent_data.py \
-        inference.max_images_per_turn=$FRAMES \
-        +inference.agent_prompt_type=$PROMPT_TYPE \
-        llm.model="$MODEL" \
-        inference.output_dir="$OUTPUT_DIR" \
-        inference.max_output_tokens=4096 \
-        inference.gpu_number=$DEVICE \
-        dataset.name=$DATASET
+    mm_cache_restarts=0
+    while true; do
+        run_log="$(mktemp)"
+        mm_error_detected=0
+
+        # Run in background so we can detect the mm cache error and kill stalled runs.
+        python3 scripts/run_uniform_agent_data.py \
+            +agent_type=uniform \
+            inference.max_images_per_turn="$FRAMES" \
+            +inference.agent_prompt_type="$PROMPT_TYPE" \
+            llm.model="$EFFECTIVE_MODEL" \
+            llm.server_url="http://$SERVER_HOST:$SERVER_PORT/v1" \
+            +llm.use_external_vllm="$EXTERNAL_VLLM_BOOL" \
+            +llm.engine="$ENGINE_NAME" \
+            inference.output_dir="$RUN_OUTPUT_DIR" \
+            inference.max_output_tokens=8192 \
+            inference.gpu_number="$DEVICE" \
+            dataset.name="$DATASET" \
+            +inference.passes="$PASSES" \
+            inference.temperature="$TEMPERATURE" \
+            inference.image_quality="$IMAGE_QUALITY" \
+            inference.max_image_width="$MAX_IMAGE_WIDTH" \
+            inference.max_image_height="$MAX_IMAGE_HEIGHT" \
+            +inference.batch_size="$BATCH_SIZE" \
+            > >(tee "$run_log") 2>&1 &
+        cmd_pid=$!
+
+        while kill -0 "$cmd_pid" >/dev/null 2>&1; do
+            if grep -Fq "$MM_CACHE_ERROR_PATTERN" "$run_log"; then
+                mm_error_detected=1
+                mm_cache_restarts=$((mm_cache_restarts + 1))
+                echo "Detected mm cache error for $DATASET (attempt ${mm_cache_restarts}/${MAX_MM_CACHE_RESTARTS})."
+
+                echo "Stopping stalled run and cleaning stale vLLM/Ray workers..."
+                kill -TERM "$cmd_pid" >/dev/null 2>&1 || true
+                sleep 2
+                kill -KILL "$cmd_pid" >/dev/null 2>&1 || true
+                wait "$cmd_pid" >/dev/null 2>&1 || true
+                pkill -f "vLLMHttpServer|run_uniform_agent_data.py|ray::|raylet" >/dev/null 2>&1 || true
+                break
+            fi
+            sleep 2
+        done
+
+        if [ "$mm_error_detected" -eq 1 ]; then
+            rm -f "$run_log"
+            if [ "$mm_cache_restarts" -gt "$MAX_MM_CACHE_RESTARTS" ]; then
+                echo "Exceeded max mm cache restart attempts for $DATASET. Exiting."
+                exit 1
+            fi
+            sleep "$RESTART_SLEEP_SECONDS"
+            echo "Retrying dataset $DATASET..."
+            continue
+        fi
+
+        wait "$cmd_pid"
+        cmd_status=$?
+        if [ "$cmd_status" -eq 0 ]; then
+            rm -f "$run_log"
+            break
+        fi
+
+        echo "Command failed for $DATASET (non-mm_cache error). Exiting."
+        grep -F "$MM_CACHE_ERROR_PATTERN" "$run_log" >/dev/null 2>&1 || cat "$run_log"
+        rm -f "$run_log"
+        exit "$cmd_status"
+    done
         
     echo "Finished $DATASET"
     echo "--------------------------------------------------------"
@@ -94,3 +232,4 @@ done
 
 echo "All evaluations completed."
 
+notify.py "Experiment $MODEL on $DEVICE completed with datasets $DATASETS"

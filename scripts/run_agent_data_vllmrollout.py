@@ -4,6 +4,7 @@ import os
 import json
 import re
 import math
+import time
 from pathlib import Path
 import glob
 from tqdm import tqdm
@@ -22,7 +23,8 @@ from huggingface_hub import snapshot_download
 PROJECT_ROOT = "/home/hg22723/projects/VSeek-R1"
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
-from src.vseek.agent.vllm_rollout import *
+    sys.path.insert(0, os.path.join(PROJECT_ROOT, "src"))
+from vseek.agent.vllm_rollout import *
 from tests.workers.rollout.utils_sglang import (
     load_tokenizer_and_model,
     prepare_inputs,
@@ -40,6 +42,16 @@ from verl.workers.config import HFModelConfig, RolloutConfig
 
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
+def str2bool(value):
+    if isinstance(value, bool):
+        return value
+    value = str(value).strip().lower()
+    if value in {"true", "1", "yes", "y", "on"}:
+        return True
+    if value in {"false", "0", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
+
 def _get_rank_and_world():
     if dist.is_available() and dist.is_initialized():
         return dist.get_rank(), dist.get_world_size()
@@ -49,6 +61,7 @@ def _get_rank_and_world():
 def _resolve_parquet_files(parquet_path: str, tag: str=None) -> list[str]:
     path = os.path.expanduser(parquet_path)
     if os.path.isdir(path):
+        path = os.path.join(path, tag)
         files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith(".parquet")]
         files.sort()
         if not files:
@@ -61,8 +74,8 @@ def _resolve_parquet_files(parquet_path: str, tag: str=None) -> list[str]:
             train_p = os.path.join(parent, "train.parquet")
             val_p = os.path.join(parent, "test.parquet")
         else:
-            train_p = os.path.join(parent, f"train_{tag}.parquet")
-            val_p = os.path.join(parent, f"test_{tag}.parquet")
+            train_p = os.path.join(parent, tag, "train.parquet")
+            val_p = os.path.join(parent, tag, "test.parquet")
         both: list[str] = []
         if os.path.isfile(train_p):
             both.append(train_p)
@@ -122,6 +135,8 @@ def _load_lvb_examples(
                 "tools_kwargs": tk,
                 "gt": None if gt is None else str(gt),
                 "video_id": metadata.get("video_id"),
+                "question": extra_info.get("question"),
+                "candidates": extra_info.get("candidates"),
             }
         )
         
@@ -145,12 +160,14 @@ def calculate_accuracy(results: list[dict]) -> float:
         return 0.0
     correct = 0
     for r in results:
+        print(r)
         pred = parse_answer(r.get("pred"))
         gt = str(r.get("gt")) if r.get("gt") is not None else ""
         if pred == gt and gt != "":
             correct += 1
     return correct / len(results)
 
+   
 
 def rollout_agent_data(
     parquet_path: str,
@@ -167,6 +184,9 @@ def rollout_agent_data(
     topk: int,
     prompt_type: str,
     hf_local_model_path: str,
+    agent_type: str,
+    passes: int,
+    store_preds: bool,
 ):
     ray.init(
         runtime_env={
@@ -204,12 +224,21 @@ def rollout_agent_data(
     
       # create standalone rollout server
 
-    out_dir = Path(output_dir)
+    out_dir = Path(os.path.join(output_dir, output_prefix))
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir.joinpath(f"{output_prefix}_rank{rank}.jsonl")
+    out_path = out_dir.joinpath(f"agent_results.jsonl")
+    
     pending_results: list[dict] = []
     all_results: list[dict] = []
-
+    # Load all results from the output directory
+    all_results = []
+    for file in os.listdir(out_dir):
+        if file.endswith(".jsonl"):
+            with open(os.path.join(out_dir, file), "r") as f:
+                for line in f:
+                    all_results.append(json.loads(line))
+    completed_qids = set([r["qid"] for r in all_results if r.get("qid") is not None])
+    print(f"Completed qids: {completed_qids}")
     # print("Generating HF output")
     # hf_response_tokens = generate_hf_output(actor_model, input_ids, attention_mask, tokenizer, max_response_length)
     # print("HF output generated")
@@ -253,9 +282,12 @@ def rollout_agent_data(
             config_name="lvb_grpo",
         )   
     
-    if 'tagsummary' in args.parquet:
+    if agent_type == 'tagsummary':
         print("Using tagsummary agent")
         rollout_config.actor_rollout_ref.rollout.agent.default_agent_loop = "vseek_tag_summary_agent"
+    elif agent_type == 'fanout':
+        print("Using fanout agent")
+        rollout_config.actor_rollout_ref.rollout.agent.default_agent_loop = "vseek_fanout_agent"
     else:
         print("Using tag agent")
         rollout_config.actor_rollout_ref.rollout.agent.default_agent_loop = "vseek_tag_agent"
@@ -263,15 +295,21 @@ def rollout_agent_data(
     rollout_config.actor_rollout_ref.rollout.name = "vllm"
     rollout_config.actor_rollout_ref.rollout.mode = "async"
     rollout_config.actor_rollout_ref.rollout.tensor_model_parallel_size = 1
-    rollout_config.actor_rollout_ref.rollout.multi_turn.max_assistant_turns = 3
+    if agent_type == 'fanout':
+        rollout_config.actor_rollout_ref.rollout.multi_turn.max_assistant_turns = 2
+        rollout_config.actor_rollout_ref.rollout.multi_turn.max_parallel_calls = 4
+    else:   
+        rollout_config.actor_rollout_ref.rollout.multi_turn.max_assistant_turns = 4
+        rollout_config.actor_rollout_ref.rollout.multi_turn.max_parallel_calls = 1
+        
     rollout_config.actor_rollout_ref.rollout.multi_turn.enable = True
-    rollout_config.actor_rollout_ref.rollout.multi_turn.tool_config_path = "./scripts/tests/agent/test_config.yaml"
+    rollout_config.actor_rollout_ref.rollout.multi_turn.tool_config_path = "./src/vseek/config/retriever/toolconfig.yaml"
     rollout_config.actor_rollout_ref.rollout.multi_turn.max_tool_response_length = 1024
     rollout_config.actor_rollout_ref.rollout.max_num_batched_tokens = 65536
-    rollout_config.actor_rollout_ref.rollout.temperature = 0.0
-    rollout_config.actor_rollout_ref.rollout.n = 1
+    rollout_config.actor_rollout_ref.rollout.temperature = 0.5
+    rollout_config.actor_rollout_ref.rollout.n = passes
 
-    rollout_config.actor_rollout_ref.rollout.agent.num_workers = 1
+    rollout_config.actor_rollout_ref.rollout.agent.num_workers = 4
     rollout_config.actor_rollout_ref.rollout.skip_tokenizer_init = True
     rollout_config.actor_rollout_ref.rollout.over_sample_rate = 0.0
     rollout_config.actor_rollout_ref.rollout.prompt_length = max_prompt_length
@@ -280,19 +318,33 @@ def rollout_agent_data(
     rollout_config.trainer.nnodes = 1
     rollout_config.actor_rollout_ref.model.path = local_model_path
     rollout_config.actor_rollout_ref.rollout.multi_turn.format = "hermes"
-    rollout_config.actor_rollout_ref.rollout.gpu_memory_utilization = 0.9
+    rollout_config.actor_rollout_ref.rollout.gpu_memory_utilization = 0.8
     # model_config = HFModelConfig(path=hf_local_model_path)
     
     
-    rollout_config.actor_rollout_ref.rollout.agent.agent_loop_config_path = "./scripts/tests/agent/test_agent.yaml"
+    rollout_config.actor_rollout_ref.rollout.agent.agent_loop_config_path = "./src/vseek/config/retriever/vllm_agent.yaml"
 
     agent_loop_manager = AgentLoopManager(rollout_config)
     # Minibatch inference with periodic writes
     total = len(examples)
     print(f"Rank {rank}/{world_size} processing {total} examples")
-    for start in tqdm(range(0, total, batch_size), desc=f"Rank {rank}/{world_size} processing examples"):
-        end = min(start + batch_size, total)
-        batch = examples[start:end]
+
+    start = 0
+    while start < total:
+        batch = []
+        qids = []
+        while len(batch) < batch_size:
+            if start >= total:
+                break
+            if start in completed_qids:
+                print(f"Skipping {start} because it is already completed")
+                start += 1
+                continue
+            batch.append(examples[start])
+            qids.append(start)
+            start += 1
+        if len(batch) == 0:
+            continue
         for ex in batch:
             ex["tools_kwargs"]["video_search"]["execute_kwargs"]["topk"] = topk
             
@@ -323,10 +375,23 @@ def rollout_agent_data(
         )
 
         messages_np = np.asarray(preencode_prompts, dtype=object)
-        if 'tagsummary' in args.parquet:
+        if agent_type == 'tagsummary':
             agent_name = "vseek_tag_summary_agent"
+        elif agent_type == 'fanout':
+            agent_name = "vseek_fanout_agent"
         else:
             agent_name = "vseek_tag_agent"
+        
+        qid_to_meta = {
+            int(qid): {
+                "video_id": ex.get("video_id"),
+                "gt": ex.get("gt"),
+                "question": ex.get("question"),
+                "candidates": ex.get("candidates"),
+            }
+            for qid, ex in zip(qids, batch)
+        }
+
         dprompts = DataProto(
             batch=prompt_dict,
             non_tensor_batch={
@@ -335,8 +400,11 @@ def rollout_agent_data(
                 "agent_name": np.array([agent_name] * len(messages_np)),
                 "data_source": np.array(["lvb"] * len(messages_np)),
                 "reward_model": np.array([{"style": "rule", "ground_truth": "1.0"}] * len(messages_np)),
+                "qid": np.array(qids, dtype=int),
             },
         )
+        
+        # Need to repeat by self.config.rollout.n
 
         dprompts.meta_info.update(
             {
@@ -345,38 +413,144 @@ def rollout_agent_data(
             }
         )
 
-        result = agent_loop_manager.generate_sequences(prompts=dprompts)
-        responses = result.batch["responses"]
-        num_turns = result.non_tensor_batch["__num_turns__"]
+        dprompts = dprompts.repeat(rollout_config.actor_rollout_ref.rollout.n, interleave=True)
+
+
+        batch_inference_start = time.perf_counter()
+        results = agent_loop_manager.generate_sequences(prompts=dprompts)
+        batch_inference_duration_sec = time.perf_counter() - batch_inference_start
+        responses = results.batch["responses"]
+        num_turns = results.non_tensor_batch["__num_turns__"]
+        results.non_tensor_batch["qid"] = dprompts.non_tensor_batch.pop("qid")
+        timing_summary = results.meta_info.get("timing", {}) if hasattr(results, "meta_info") else {}
+        generate_mean = float(timing_summary.get("agent_loop/generate_sequences/mean", 0.0))
+        tool_calls_mean = float(timing_summary.get("agent_loop/tool_calls/mean", 0.0))
+        qid_pass_counter: dict[int, int] = {}
 
         # Build per-example results and enqueue for write
-        for i, ex in enumerate(batch):
-            pred_text = tokenizer.decode(responses[i], skip_special_tokens=False)
+        # After repeat(interleave=True), each batch row is duplicated rollout.n times; qid tags each row.
+        parsed_results = dict()
+        for j, res in enumerate(results):
+            pred_text = tokenizer.decode(res.batch["responses"], skip_special_tokens=False)  
             parsed_pred = parse_answer(pred_text)
-            turns = num_turns[i]
+            turns = num_turns[j]
             print(f"Parsed pred: {parsed_pred} over {turns} turns")
-            result = {
-                "video_id": ex.get("video_id"),
-                "pred": pred_text,
-                "gt": ex.get("gt"),
-                "parsed_pred": parsed_pred,
-                "question": ex.get("messages"),
-                "turns": str(turns),
+            qid = int(results.non_tensor_batch["qid"][j])
+            pass_idx = qid_pass_counter.get(qid, 0) + 1
+            qid_pass_counter[qid] = pass_idx
+            step_timing = {
+                "pass_idx": pass_idx,
+                "batch_inference_duration_sec": batch_inference_duration_sec,
+                "agent_generate_sequences_mean_sec": generate_mean,
+                "agent_tool_calls_mean_sec": tool_calls_mean,
             }
-            pending_results.append(result)
-            all_results.append(result)
+            meta = qid_to_meta.get(qid, {"video_id": None, "gt": None, "question": None})
+            if qid not in parsed_results:
+                if store_preds:
+                    pred_text = tokenizer.decode(res.batch["responses"], skip_special_tokens=True) 
+                    parsed_results[qid] = {
+                        "video_id": meta["video_id"],
+                        "gt": meta["gt"],
+                        "pred": [pred_text],
+                        "parsed_pred": [parsed_pred],
+                        "turns": [str(turns)],
+                        "pass_inference_steps": [step_timing],
+                        "qid": qid,
+                        "question": meta.get("question"),
+                        "candidates": meta.get("candidates"),
+                    }
+                else:
+                    parsed_results[qid] = {
+                        "video_id": meta["video_id"],
+                        "gt": meta["gt"],
+                        "parsed_pred": [parsed_pred],
+                        "turns": [str(turns)],
+                        "pass_inference_steps": [step_timing],
+                        "qid": qid,
+                        "question": meta.get("question"),
+                        "candidates": meta.get("candidates"),
+                    }
+            else:
+                parsed_results[qid]["parsed_pred"].append(parsed_pred)
+                parsed_results[qid]["turns"].append(str(turns))
+                parsed_results[qid]["pass_inference_steps"].append(step_timing)
+                if store_preds:
+                    parsed_results[qid]["pred"].append(pred_text)
+        if parsed_results:
+            first_key = next(iter(parsed_results))
+            assert len(parsed_results[first_key]["parsed_pred"]) == rollout_config.actor_rollout_ref.rollout.n
+        parsed_results = list(parsed_results.values())
 
+
+        from collections import Counter
+        for j, parsed_r in enumerate(parsed_results):
+            counts = Counter([p for p in parsed_r["parsed_pred"] if p]) # Filter empty? Or count empty as wrong?
+            # If all are empty, majority is empty
+            if not counts:
+                majority_vote = ""
+            else:
+                majority_vote = counts.most_common(1)[0][0]
+            parsed_results[j]["majority_vote"] = majority_vote
+            parsed_results[j]["correct_count"] = sum(1 for p in parsed_r["parsed_pred"] if p == parsed_r["gt"])
+            parsed_results[j]["is_majority_correct"] = majority_vote == parsed_r["gt"]
+            pass_steps = parsed_results[j].get("pass_inference_steps", [])
+            parsed_results[j]["pass_latencies_sec"] = [
+                step.get("agent_generate_sequences_mean_sec", 0.0) + step.get("agent_tool_calls_mean_sec", 0.0)
+                for step in pass_steps
+            ]
+            if pass_steps:
+                parsed_results[j]["avg_pass_latency_sec"] = sum(parsed_results[j]["pass_latencies_sec"]) / len(pass_steps)
+                parsed_results[j]["total_inference_time_sec"] = sum(parsed_results[j]["pass_latencies_sec"])
+            else:
+                parsed_results[j]["avg_pass_latency_sec"] = None
+                parsed_results[j]["total_inference_time_sec"] = None
+        pending_results.extend(parsed_results)
+        all_results.extend(parsed_results)
         # Periodic flush to JSONL
-        if len(pending_results) >= flush_every or end == total:
+        if len(pending_results) >= flush_every or start >= total:
             with open(out_path, "a", encoding="utf-8") as f:
                 for r in pending_results:
                     f.write(json.dumps(r, ensure_ascii=False) + "\n")
             pending_results.clear()
-            acc = calculate_accuracy(all_results)
-            num_correct = sum(1 for r in all_results if parse_answer(r.get("pred")) == (r.get("gt") or ""))
+            # acc = calculate_accuracy(all_results)
+            
+            # Replace with pass@k analysis
+            num_correct = sum(1 for r in all_results if parse_answer(r.get("majority_vote")) == (r.get("gt") or ""))
+            acc = num_correct / len(all_results)
             print(
-                f"[rank {rank}] Progress {end}/{total} | Accuracy: {acc:.3f} ({num_correct}/{len(all_results)})"
+                f"[rank {rank}] Progress {start}/{total} | Accuracy: {acc:.3f} ({num_correct}/{len(all_results)})"
             )
+        
+        import math
+        def comb(n, k):
+            return math.comb(n, k)
+        
+        def pass_at_k_estimator(n, c, k):
+            if n < k: return 0.0 # Should not happen if we filter ks
+            if n - c < k: return 1.0
+            return 1.0 - (comb(n-c, k) / comb(n, k))
+        
+        print(f"Results for {agent_type} on {output_prefix} with {passes} passes and {prompt_type} prompt type:")
+        eval_total = len(all_results)
+        if eval_total > 0:
+
+            n_passes = passes
+            ks = [1, 2, 4, 5, 8, 10, 16]
+            ks = [k for k in ks if k <= n_passes]
+            # Include n_passes if not present and > 1
+            if n_passes > 1 and n_passes not in ks:
+                ks.append(n_passes)
+            ks = sorted(list(set(ks)))
+            
+            for k in ks:
+                sum_pass_at_k = 0.0
+                for r in all_results:
+                    c = r.get("correct_count", 0)
+                    sum_pass_at_k += pass_at_k_estimator(n_passes, c, k)
+                avg_pass_at_k = sum_pass_at_k /eval_total
+                print(f"Pass@{k} Accuracy: {avg_pass_at_k:.3f}")
+        else:
+            print("No results found.")
 
     return None
     # torch.distributed.barrier()
@@ -398,7 +572,17 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", default=os.path.expanduser("~/results/sglang_runs"), help="Directory to store JSONL outputs")
     parser.add_argument("--output_prefix", default="sglang", help="Filename prefix for JSONL outputs")
     parser.add_argument("--topk", type=int, default=4, help="Top-k sampling parameter")
-    parser.add_argument("--prompt_type", type=str, default="tag", help="Prompt type: tag or openai or tagsummary")
+    parser.add_argument("--prompt_type", type=str, default="tag", help="Prompt type: tag or openai or tagsummary or fanout")
+    parser.add_argument("--agent_type", type=str, default="tag", help="Agent type: tag or openai or tagsummary or fanout")
+    parser.add_argument("--passes", type=int, default=16, help="Number of passes")
+    parser.add_argument(
+        "--store_preds",
+        nargs="?",
+        const=True,
+        default=False,
+        type=str2bool,
+        help="Store predictions in output records (accepts true/false, or bare flag for true)",
+    )
     args = parser.parse_args()
 
     if args.hf_local_model_path is None:
@@ -419,4 +603,7 @@ if __name__ == "__main__":
         topk=args.topk,
         prompt_type=args.prompt_type,
         hf_local_model_path=args.hf_local_model_path,
+        agent_type=args.agent_type,
+        passes=args.passes,
+        store_preds=args.store_preds,
     )

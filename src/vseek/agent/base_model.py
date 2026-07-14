@@ -2,13 +2,17 @@ import os
 from typing import Any, Dict, List
 import uuid
 import asyncio
+import io
+import re
 
 from transformers import AutoProcessor
 from vllm import SamplingParams
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.engine.arg_utils import AsyncEngineArgs
+from openai import OpenAI
 import cv2
 import base64
+from PIL import Image
 
 class LocalVLLMBase:
     def __init__(self, config) -> None:
@@ -19,42 +23,156 @@ class LocalVLLMBase:
 
         # Model / generation settings
         self.model_path = config.llm.model
+        self.is_internvl = "InternVL" in str(self.model_path)
         self.max_image_width = config.inference.max_image_width
         self.max_image_height = config.inference.max_image_height
         self.max_images = getattr(config.inference, "max_images_per_turn", 16)
         self.temperature = float(getattr(config.inference, "temperature", 0.0))
         self.thinking_enabled = getattr(config.inference, "thinking_enabled", True)
-        # Processor and LLM
-        self.processor = AutoProcessor.from_pretrained(self.model_path, trust_remote_code=True)
-        
-        engine_args = AsyncEngineArgs(
-            model=self.model_path,
-            tensor_parallel_size=1,
-            gpu_memory_utilization=0.8,
-            enforce_eager=True,
-            mm_processor_kwargs={
-                "max_pixels": int(self.max_image_width) * int(self.max_image_height),
-                "nframes": int(self.max_images),
-                "fps": 1,
-            },
-            trust_remote_code=True,
-        )
-        
-        self.llm = AsyncLLMEngine.from_engine_args(engine_args)
-        
-        self.sampling_params = SamplingParams(
-            temperature=max(0.0, self.temperature),
-            top_p=0.001,
-            repetition_penalty=1.05,
-            max_tokens=self.config.inference.max_output_tokens,
-            stop_token_ids=[],
-        )
+        self.max_output_tokens = int(getattr(config.inference, "max_output_tokens", 512))
+        self.server_url = getattr(config.llm, "server_url", None)
+        self.openai_api_key = getattr(config.llm, "openai_api_key", "EMPTY")
+
+        # Engine selection:
+        # - default is local vLLM (existing behavior)
+        # - optionally use an external OpenAI-compatible vLLM server
+        engine_name = str(getattr(config.llm, "engine", "vllm")).lower()
+        explicit_external = bool(getattr(config.llm, "use_external_vllm", False))
+        self.use_external_vllm = explicit_external or engine_name in {"external_vllm", "vllm_server", "server"}
+
+        if self.use_external_vllm:
+            if not self.server_url:
+                raise ValueError("llm.server_url must be set when using external vLLM server mode.")
+            self.client = OpenAI(api_key=self.openai_api_key, base_url=self.server_url)
+            self.processor = None
+            self.llm = None
+            self.sampling_params = None
+        else:
+            # Processor and local LLM are only needed in local engine mode.
+            self.processor = AutoProcessor.from_pretrained(self.model_path, trust_remote_code=True)
+            # InternVL 4B expects 448x448 vision inputs in vLLM.
+            if self.is_internvl:
+                mm_processor_kwargs = {
+                    "size": {"height": 448, "width": 448},
+                    "crop_size": {"height": 448, "width": 448},
+                    "nframes": int(self.max_images),
+                    "fps": 1,
+                }
+            else:
+                mm_processor_kwargs = {
+                    "max_pixels": int(self.max_image_width) * int(self.max_image_height),
+                    "nframes": int(self.max_images),
+                    "fps": 1,
+                }
+
+            engine_args = AsyncEngineArgs(
+                model=self.model_path,
+                tensor_parallel_size=1,
+                gpu_memory_utilization=0.7,
+                enforce_eager=True,
+                mm_processor_kwargs=mm_processor_kwargs,
+                trust_remote_code=True,
+            )
+            
+            self.llm = AsyncLLMEngine.from_engine_args(engine_args)
+            
+            self.sampling_params = SamplingParams(
+                temperature=max(0.0, self.temperature),
+                top_p=0.001,
+                repetition_penalty=1.05,
+                max_tokens=self.max_output_tokens,
+                stop_token_ids=[],
+            )
+
+    def _normalize_messages_for_openai(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if not isinstance(content, list):
+                normalized.append({"role": role, "content": content})
+                continue
+
+            rebuilt: List[Dict[str, Any]] = []
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                item_type = item.get("type")
+                if item_type == "text":
+                    rebuilt.append({"type": "text", "text": item.get("text", "")})
+                elif item_type == "image_url":
+                    image_url = item.get("image_url")
+                    if isinstance(image_url, str):
+                        image_url = {"url": image_url}
+                    elif isinstance(image_url, dict):
+                        image_url = {"url": image_url.get("url", "")}
+                    else:
+                        continue
+                    rebuilt.append({"type": "image_url", "image_url": image_url})
+                else:
+                    # Preserve other multimodal content as-is for compatible servers.
+                    rebuilt.append(item)
+            normalized.append({"role": role, "content": rebuilt})
+        return normalized
 
     def build_prompt_and_mm(self, messages: List[Dict[str, Any]]):
+        if self.processor is None:
+            raise RuntimeError("build_prompt_and_mm is only available in local vLLM mode.")
+
+        if self.is_internvl:
+            image_inputs = []
+            template_messages: List[Dict[str, Any]] = []
+            for msg in messages:
+                role = msg.get("role")
+                content = msg.get("content")
+                if not isinstance(content, list):
+                    template_messages.append(msg)
+                    continue
+
+                rebuilt_content = []
+                for item in content:
+                    if not isinstance(item, dict):
+                        continue
+                    item_type = item.get("type")
+                    if item_type == "image_url":
+                        image_url = item.get("image_url")
+                        if isinstance(image_url, dict):
+                            image_url = image_url.get("url")
+                        if isinstance(image_url, str):
+                            match = re.match(r"^data:image/[^;]+;base64,(.+)$", image_url)
+                            if match is not None:
+                                img_bytes = base64.b64decode(match.group(1))
+                                image_inputs.append(Image.open(io.BytesIO(img_bytes)).convert("RGB"))
+                                # InternVL chat templates require explicit multimodal placeholders.
+                                rebuilt_content.append({"type": "image"})
+                    elif item_type == "text":
+                        rebuilt_content.append({"type": "text", "text": item.get("text", "")})
+
+                template_messages.append({"role": role, "content": rebuilt_content})
+
+            try:
+                prompt = self.processor.apply_chat_template(
+                    template_messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    thinking_enabled=self.thinking_enabled,
+                )
+            except TypeError:
+                prompt = self.processor.apply_chat_template(
+                    template_messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+
+            mm_data: Dict[str, Any] = {}
+            if image_inputs:
+                mm_data["image"] = image_inputs
+            return prompt, mm_data, None
+
         from qwen_vl_utils import process_vision_info
 
-        prompt = self.processor.apply_chat_template(messages, 
-                                                    tokenize=False, 
+        prompt = self.processor.apply_chat_template(messages,
+                                                    tokenize=False,
                                                     add_generation_prompt=True,
                                                     thinking_enabled=self.thinking_enabled)
         image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
@@ -66,6 +184,24 @@ class LocalVLLMBase:
         return prompt, mm_data, video_kwargs
 
     async def generate_text(self, messages: List[Dict[str, Any]]) -> str:
+        if self.use_external_vllm:
+            normalized_messages = self._normalize_messages_for_openai(messages)
+
+            def _request():
+                return self.client.chat.completions.create(
+                    model=self.model_path,
+                    messages=normalized_messages,
+                    temperature=max(0.0, self.temperature),
+                    max_tokens=self.max_output_tokens,
+                )
+
+            try:
+                response = await asyncio.to_thread(_request)
+            except Exception as e:
+                print(f"Error: {e}")
+                return ""
+            return response.choices[0].message.content or ""
+
         prompt, mm_data, video_kwargs = self.build_prompt_and_mm(messages)
         
         request_id = str(uuid.uuid4())

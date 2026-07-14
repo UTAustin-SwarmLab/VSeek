@@ -1,0 +1,5 @@
+python scripts/run_api_eval.py --agent_type uniform --model_type gemini --dataset cgbench --passes 4 --output_dir results/gemini3/cgbench --batch_size 32 --max_images_per_turn 64 
+python scripts/run_api_eval.py --agent_type uniform --model_type gemini --dataset lvb --passes 4 --output_dir results/gemini3/lvb --batch_size 32 --max_images_per_turn 64
+python scripts/run_api_eval.py --agent_type uniform --model_type gemini --dataset videomme --passes 4 --output_dir results/gemini3/videomme --batch_size 32 --max_images_per_turn 64
+python scripts/run_api_eval.py --agent_type uniform --model_type gemini --dataset mlvu --passes 4 --output_dir results/gemini3/mlvu --batch_size 32 --max_images_per_turn 64
+python scripts/run_api_eval.py --agent_type uniform --model_type gemini --dataset lvbench --passes 4 --output_dir results/gemini3/lvbench --batch_size 32 --max_images_per_turn 64

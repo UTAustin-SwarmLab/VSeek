@@ -7,6 +7,8 @@ set -e  # Exit on error
 CHUNKS_DIR="${CHUNKS_DIR:-/nas/mars/dataset/LVBench/video_chunks}"
 OUTPUT_DIR="${OUTPUT_DIR:-/nas/mars/dataset/LVBench/videos}"
 SUBTITLE_DIR="${SUBTITLE_DIR:-/nas/mars/dataset/LVBench/subtitles}"
+# Regex for dataset-specific chunk naming (override if needed)
+VIDEO_REGEX="${VIDEO_REGEX:-^(video_chunk|videos_chunk|videos_chunked).*[.]zip$}"
 # Color output
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -30,22 +32,31 @@ fi
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
 
-# Count total zip files
-TOTAL_ZIPS=$(ls -1 "$CHUNKS_DIR"/*.zip 2>/dev/null | wc -l)
+# Build matched video zip list from regex (supports multiple dataset conventions)
+VIDEO_ZIPS=()
+while IFS= read -r zip_file; do
+    filename=$(basename "$zip_file")
+    if [[ "$filename" =~ $VIDEO_REGEX ]]; then
+        VIDEO_ZIPS+=("$zip_file")
+    fi
+done < <(find "$CHUNKS_DIR" -maxdepth 1 -type f -name "*.zip" | sort)
+
+TOTAL_ZIPS=${#VIDEO_ZIPS[@]}
 
 if [ "$TOTAL_ZIPS" -eq 0 ]; then
-    echo -e "${RED}Error: No zip files found in $CHUNKS_DIR${NC}"
+    echo -e "${RED}Error: No video chunk zip files matched regex: $VIDEO_REGEX${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}Found $TOTAL_ZIPS zip files to extract${NC}"
+echo -e "${GREEN}Found $TOTAL_ZIPS video chunk zip files to extract${NC}"
+echo "Matching regex: $VIDEO_REGEX"
 echo ""
 
 # Extract each zip file
 CURRENT=0
 FAILED=()
 
-for zip_file in "$CHUNKS_DIR"/videos_chunk*.zip; do
+for zip_file in "${VIDEO_ZIPS[@]}"; do
     CURRENT=$((CURRENT + 1))
     filename=$(basename "$zip_file")
     
@@ -81,8 +92,11 @@ else
     done
 fi
 
-if [ -f "$CHUNKS_DIR/subtitle.zip" ]; then
-    if unzip -o "$CHUNKS_DIR/subtitle.zip" -d "$SUBTITLE_DIR"
+if [ -f "$CHUNKS_DIR/subtitle.zip" ] or [ -f "$CHUNKS_DIR/subtitles.zip" ]; then
+    mkdir -p "$SUBTITLE_DIR"
+    if unzip -o "$CHUNKS_DIR/subtitle.zip" -d "$SUBTITLE_DIR"; then
+        echo -e "${GREEN}✓ Successfully extracted subtitles.zip${NC}"
+    elif unzip -o "$CHUNKS_DIR/subtitles.zip" -d "$SUBTITLE_DIR"; then
         echo -e "${GREEN}✓ Successfully extracted subtitles.zip${NC}"
     else
         echo -e "${RED}✗ Failed to extract subtitles.zip${NC}"

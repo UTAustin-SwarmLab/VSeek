@@ -1,0 +1,5 @@
+python scripts/run_api_eval.py --agent_type uniform --model_type gpt52 --dataset cgbench --passes 4 --output_dir results/gpt64/cgbench --batch_size 2 --max_images_per_turn 64
+python scripts/run_api_eval.py --agent_type uniform --model_type gpt52 --dataset lvb --passes 4 --output_dir results/gpt64/lvb --batch_size 2 --max_images_per_turn 64
+python scripts/run_api_eval.py --agent_type uniform --model_type gpt52 --dataset videomme --passes 4 --output_dir results/gpt64/videomme --batch_size 2 --max_images_per_turn 64
+python scripts/run_api_eval.py --agent_type uniform --model_type gpt52 --dataset mlvu --passes 4 --output_dir results/gpt64/mlvu --batch_size 2 --max_images_per_turn 64
+python scripts/run_api_eval.py --agent_type uniform --model_type gpt52 --dataset lvbench --passes 4 --output_dir results/gpt64/lvbench --batch_size 2 --max_images_per_turn 64
