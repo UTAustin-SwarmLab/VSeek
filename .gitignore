@@ -170,3 +170,4 @@ cython_debug/
 # VS Code
 .vscode
 tmp
+video_clip_frames/
