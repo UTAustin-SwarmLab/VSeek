@@ -496,11 +496,15 @@ VSeek-R1/
 If you use this code, please cite:
 
 ```bibtex
-@inproceedings{vseekr1,
-  title     = {{VSeek-R1}: TODO — fill in camera-ready title},
-  author    = {TODO},
-  booktitle = {TODO},
-  year      = {2026}
+@inproceedings{hg_2026_ECCV,
+  author={Goel, Harsh and Sharan, SP and Shah, Sahil and Choi, Minkyu and An, Joungbin, and Grauman, Kristen, and Chinchali, Sandeep},
+  title={Incentivizing Vision Language Models to Search for Long Video Question Answering},
+  booktitle={Proceedings of the European Conference on Computer Vision (ECCV)},
+  year = {2026},
+  address = {Malmo, Sweden},
+  month = {9},
+  publisher = {Springer},
+  keywords={2026},
 }
 ```
 
