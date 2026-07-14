@@ -6,10 +6,10 @@ from tqdm import tqdm
 WINDOW_SIZE = 8
 PROMPT_TYPE = "tagsummary"
 DATA_ROOT = "/nas/mars/dataset/"
-OUTPUT_DIR = f"/nas/mars/vseek/data/direct/{PROMPT_TYPE}"
+OUTPUT_DIR = f"/nas/mars/vseek/data/{PROMPT_TYPE}"
 
-TRAIN_DATASETS = ["longvideobench/direct",  "Video-MME/direct", "MLVU/direct"]
-TEST_DATASETS = ["longvideobench/direct",  "Video-MME/direct", "MLVU/direct"]
+TRAIN_DATASETS = ["longvideobench",  "Video-MME", "MLVU"]
+TEST_DATASETS = ["longvideobench",  "Video-MME", "MLVU"]
 
 # ================= HELPER FUNCTION =================
 
