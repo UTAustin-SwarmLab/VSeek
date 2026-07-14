@@ -31,11 +31,18 @@ actor_rollout_ref:
     gpu_memory_utilization: 0.8
     max_model_len: 16384
     max_num_seqs: 4096
+    over_sample_rate: 0.1
+    mode: sync
+    calculate_log_probs: False
     log_prob_micro_batch_size_per_gpu: 32
     log_prob_use_dynamic_bsz: False
     log_prob_max_token_len_per_gpu: 32768
     disable_log_stats: False
     multi_stage_wake_up: False
+    agent:
+      num_workers: 1
+      default_agent_loop: single_turn_agent
+      agent_loop_config_path: null
     engine_kwargs:
       vllm: {}
       sglang: {}
@@ -54,3 +61,8 @@ reward_model:
 custom_reward_function:
   path: src/vseek/trainer/reward/vseekreward.py
   name: compute_score
+  reward_kwargs:
+    format_score: 0.0
+    score: {'em':1.0, 'puls': 0.5}
+    reward_type: em
+    puls_threshold: 0.15

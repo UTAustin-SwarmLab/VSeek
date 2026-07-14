@@ -199,9 +199,9 @@ if [[ ! -d "$PROJECT_ROOT/src/vseek" ]]; then
 fi
 PROJECT_DIR="${PROJECT_ROOT}/src/vseek"
 CONFIG_PATH="${PROJECT_DIR}/config"
-MODEL_PATH="Qwen/Qwen3-VL-4B-Thinking"
+MODEL_PATH="Qwen/Qwen3-VL-8B-Thinking"
 PROJECT_NAME="vseek"
-EXPERIMENT_NAME="qwen3-4bt_vl_lvbvmmelvbench-emreward-vllm-wtool-tagsummary"
+EXPERIMENT_NAME="qwen3-48t_vl_lvbvmmelvbench-emreward-vllm-wtool-tagsummary"
 CHECKPOINT_DIR="/work/11123/harshgoel99/vista/checkpoints"
 
 echo "PROJECT_ROOT: $PROJECT_ROOT"
@@ -315,7 +315,7 @@ export NCCL_DEBUG=WARN                # Show warnings to help diagnose issues
 module load gcc/14.2.0 cuda/12.8
 python3 -m vseek.trainer.main_ppo \
     --config-path="$CONFIG_PATH" \
-    --config-name='lvb_grpo' \
+    --config-name='lvb_grpo_lora' \
     algorithm.adv_estimator=grpo \
     data.train_batch_size=128 \
     data.val_batch_size=128 \

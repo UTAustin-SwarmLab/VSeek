@@ -9,7 +9,7 @@
 #SBATCH -t 48:00:00
 #SBATCH --mem=0
 
-# USAGE: sbatch run_vseek_job.slurm [em|puls]
+# USAGE: sbatch run_vseek_all_jobs.slurm [em|puls]
 
 echo "Starting job on $(hostname)"
 date
@@ -22,6 +22,7 @@ export MASTER_PORT=${MASTER_PORT:-29651}
 export CUDA_LAUNCH_BLOCKING=1
 export VLLM_USE_V1=1
 export RAY_memory_usage_threshold=0.95
+
 export RAY_PORT=6379
 export RAY_DASHBOARD_PORT=8265
 export SERVER_PORT=9000
@@ -50,18 +51,19 @@ echo "HuggingFace cache: $HF_HOME"
 PROJECT_ROOT="${SLURM_SUBMIT_DIR:-/home1/11123/harshgoel99/VSeek-R1}"
 PROJECT_DIR="${PROJECT_ROOT}/src/vseek"
 CONFIG_PATH="${PROJECT_DIR}/config"
-MODEL_PATH="Qwen/Qwen3-VL-4B-Instruct"
+MODEL_PATH="Qwen/Qwen3-VL-8B-Instruct"
 PROJECT_NAME="vseek"
 TRAIN_DATA_PATH="${SCRATCH}/vseek/tagsummary/train.parquet"
 VAL_DATA_PATH="${SCRATCH}/vseek/tagsummary/test.parquet"
+# CHECKPOINT_DIR="/work/11123/harshgoel99/vista/checkpoints"
 CHECKPOINT_DIR="${SCRATCH}/checkpoints"
-REWARD_TYPE="${1:-puls}" # Accept from sbatch script arg: em or puls
+REWARD_TYPE="${1:-em}" # Accept from sbatch script arg: em or puls
 if [[ "$REWARD_TYPE" != "em" && "$REWARD_TYPE" != "puls" ]]; then
     echo "Error: REWARD_TYPE must be 'em' or 'puls', got '$REWARD_TYPE'"
     exit 1
 fi
 echo "Using REWARD_TYPE=$REWARD_TYPE"
-EXPERIMENT_NAME="qwen3-4bi_vl_lvbvmmemlvu-${REWARD_TYPE}reward-vllm-wtool-tagsummary-rloo"
+EXPERIMENT_NAME="qwen3-8bi_vl_lvbvmmemlvu-${REWARD_TYPE}reward-vllm-wtool-tagsummary_peft"
 PULS_THRESHOLD=0.14
 
 WRAPPER_SCRIPT="${PROJECT_ROOT}/scripts/tacc/ray_wrapper.sh"
@@ -182,7 +184,7 @@ echo "TOOL_CONFIG_SRC: $TOOL_CONFIG_SRC"
 # Start the server in the background on the Head Node
 # We bind it to GPU 0 as requested
 echo "Starting server..."
-SERVER_PORT=8900
+SERVER_PORT=8901
 SERVER_URL="http://0.0.0.0:${SERVER_PORT}"
 # SERVER_URL="http://${HEAD_NODE}:${SERVER_PORT}"
 # Use wrapper to ensure env is correct, but run locally as we are on Head Node
@@ -255,7 +257,6 @@ fi
 
 # Training Variables
 
-
 export NCCL_SOCKET_IFNAME=^lo,docker  # Exclude loopback and docker, use everything else
 export NCCL_IB_DISABLE=0              # Enable InfiniBand/RDMA
 export NCCL_NET_GDR_LEVEL=5           # Enable GPU Direct RDMA
@@ -268,10 +269,10 @@ module load gcc/14.2.0 cuda/12.8
 # and connects to the Ray cluster (address="auto") to distribute work.
 python3 -m vseek.trainer.main_ppo \
     --config-path="$CONFIG_PATH" \
-    --config-name='lvb_grpo' \
-    algorithm.adv_estimator='rloo' \
+    --config-name='lvb_grpo_lora' \
+    algorithm.adv_estimator=grpo \
     data.train_batch_size=32 \
-    data.val_batch_size=32 \
+    data.val_batch_size=64 \
     data.max_prompt_length=2536 \
     data.max_response_length=5656 \
     data.filter_overlong_prompts=True \
@@ -281,7 +282,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps=50 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=32\
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.freeze_vision_tower=True \
@@ -299,11 +300,11 @@ python3 -m vseek.trainer.main_ppo \
     +ray_kwargs.ray_init.address="auto" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
+    actor_rollout_ref.rollout.max_num_seqs=16 \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=4 \
     actor_rollout_ref.rollout.max_model_len=8192 \
     actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.max_num_seqs=16 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.free_cache_engine=True  \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.n=5 \
@@ -311,7 +312,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.rollout.over_sample_rate=0.1 \
     actor_rollout_ref.rollout.agent.num_workers=1 \
     actor_rollout_ref.rollout.mode=async \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=64 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \

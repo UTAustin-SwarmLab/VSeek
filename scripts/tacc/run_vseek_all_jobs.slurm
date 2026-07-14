@@ -122,7 +122,7 @@ echo "----------------------------------------"
 # A. Start Ray Head (Local execution on the first node)
 # We do not use srun here because the batch script is already running on the head node.
 echo "Starting Ray Head on $HEAD_NODE..."
-numactl --cpunodebind=0 --membind=0 --physcpubind=0-71" $WRAPPER_SCRIPT" ray start --head \
+numactl --cpunodebind=0 --membind=0 --physcpubind=0-71 "$WRAPPER_SCRIPT" ray start --head \
     --node-ip-address="$HEAD_IP" \
     --port=$RAY_PORT \
     --dashboard-port=$RAY_DASHBOARD_PORT \
@@ -147,7 +147,7 @@ for ((i = 1; i <= NUM_WORKERS; i++)); do
     # Note: We explicitly source bashrc/conda again to ensure the non-interactive srun shell has the env.
     srun --nodes=1 --ntasks=1 -w $node_i \
         bash -c "source ~/.bashrc && conda activate vseek-vllm4 && \
-                numactl --cpunodebind=0 --membind=0 --physcpubind=0-71 $WRAPPER_SCRIPT ray start --address $HEAD_IP:$RAY_PORT --num-gpus=1 --num-cpus=8 --block" &
+                numactl --cpunodebind=0 --membind=0 --physcpubind=0-71 "$WRAPPER_SCRIPT" ray start --address $HEAD_IP:$RAY_PORT --num-gpus=1 --num-cpus=8 --block" &
     sleep 5
 done
 
@@ -271,7 +271,7 @@ python3 -m vseek.trainer.main_ppo \
     --config-path="$CONFIG_PATH" \
     --config-name='lvb_grpo' \
     algorithm.adv_estimator=grpo \
-    data.train_batch_size=64 \
+    data.train_batch_size=32 \
     data.val_batch_size=64 \
     data.max_prompt_length=2536 \
     data.max_response_length=5656 \
@@ -282,8 +282,8 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps=50 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=16\
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=5 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.freeze_vision_tower=True \
     actor_rollout_ref.actor.clip_ratio_high=0.28 \
@@ -300,7 +300,7 @@ python3 -m vseek.trainer.main_ppo \
     +ray_kwargs.ray_init.address="auto" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
-    actor_rollout_ref.rollout.max_num_seqs=64 \
+    actor_rollout_ref.rollout.max_num_seqs=16 \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=4 \
     actor_rollout_ref.rollout.max_model_len=8192 \
     actor_rollout_ref.rollout.name=vllm \
@@ -312,7 +312,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.rollout.over_sample_rate=0.1 \
     actor_rollout_ref.rollout.agent.num_workers=1 \
     actor_rollout_ref.rollout.mode=async \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=64 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \
@@ -334,7 +334,7 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.rollout.multi_turn.tool_config_path="$TOOL_CONFIG_TMP" \
     actor_rollout_ref.rollout.agent.agent_loop_config_path="${PROJECT_ROOT}/src/vseek/config/retriever/vllm_agent.yaml" \
     actor_rollout_ref.rollout.agent.default_agent_loop="vseek_tag_summary_agent" \
-    trainer.total_epochs=50 \
+    trainer.total_epochs=6 \
     trainer.val_before_train=False \
     trainer.log_val_generations=20 \
     custom_reward_function.path="${PROJECT_ROOT}/src/vseek/trainer/reward/vseekreward.py" \

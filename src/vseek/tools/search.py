@@ -194,8 +194,25 @@ class VideoSearchTool(BaseTool):
                 frame_indices = sorted(data.get("frame_indices", []))
             elif search_type == "subtitles":
                 resp = requests.get(f"{self.server_url}/search_subtitle", params=payload, timeout=self.timeout)
-                resp.raise_for_status()
-                data = resp.json()
+                if resp.status_code == 404:
+                    try:
+                        error_message = resp.json().get("error", "No subtitles available")
+                    except ValueError:
+                        error_message = "No subtitles available"
+                    logger.info("Subtitle search returned no results for video %s: %s", video_id, error_message)
+                    data = {
+                        "video_id": video_id,
+                        "subtitle_indices": [],
+                        "metadata": {
+                            "search_type": "subtitles",
+                            "status": "no_results",
+                            "reason": error_message,
+                        },
+                        "puls": {},
+                    }
+                else:
+                    resp.raise_for_status()
+                    data = resp.json()
                 frame_indices = sorted(data.get("subtitle_indices", []))
             if data.get("error"):
                 return [], [], {"status": "error", "error": data.get("error"), "search_mode": search_type}

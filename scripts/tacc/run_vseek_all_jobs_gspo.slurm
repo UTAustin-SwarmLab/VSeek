@@ -46,7 +46,7 @@ echo "HuggingFace cache: $HF_HOME"
 PROJECT_ROOT="${SLURM_SUBMIT_DIR:-/home1/11123/harshgoel99/VSeek-R1}"
 PROJECT_DIR="${PROJECT_ROOT}/src/vseek"
 CONFIG_PATH="${PROJECT_DIR}/config"
-MODEL_PATH="Qwen/Qwen3-VL-4B-Thinking"
+MODEL_PATH="Qwen/Qwen3-VL-4B-Instruct"
 PROJECT_NAME="vseek"
 TRAIN_DATA_PATH="${SCRATCH}/vseek/tagsummary/train.parquet"
 VAL_DATA_PATH="${SCRATCH}/vseek/tagsummary/test.parquet"
@@ -58,7 +58,7 @@ if [[ "$REWARD_TYPE" != "em" && "$REWARD_TYPE" != "puls" ]]; then
     echo "Error: REWARD_TYPE must be 'em' or 'puls', got '$REWARD_TYPE'"
     exit 1
 fi
-EXPERIMENT_NAME="qwen3-4bt_vl_lvbvmmemlvu-${REWARD_TYPE}reward-vllm-wtool-tagsummary-gspo-klentr"
+EXPERIMENT_NAME="qwen3-4bi_vl_lvbvmmemlvu-${REWARD_TYPE}reward-vllm-wtool-tagsummary-gspo-klentr"
 echo "Using REWARD_TYPE=$REWARD_TYPE"
 PULS_THRESHOLD=0.14
 
@@ -272,7 +272,7 @@ python3 -m vseek.trainer.main_ppo \
     --config-path="$CONFIG_PATH" \
     --config-name='lvb_grpo' \
     algorithm.adv_estimator=grpo \
-    data.train_batch_size=64 \
+    data.train_batch_size=32 \
     data.val_batch_size=64 \
     data.max_prompt_length=2536 \
     data.max_response_length=5656 \
@@ -285,8 +285,8 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.policy_loss.loss_mode='gspo' \
     actor_rollout_ref.actor.loss_agg_mode='token-mean' \
-    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.freeze_vision_tower=True \
     actor_rollout_ref.actor.clip_ratio_low=3e-4 \
@@ -301,14 +301,14 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
     +ray_kwargs.ray_init.address="auto" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
+    actor_rollout_ref.rollout.max_num_batched_tokens=16384 \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=4 \
     actor_rollout_ref.rollout.max_model_len=8192 \
     actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.free_cache_engine=True  \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.n=5 \
@@ -316,7 +316,8 @@ python3 -m vseek.trainer.main_ppo \
     actor_rollout_ref.rollout.over_sample_rate=0.1 \
     actor_rollout_ref.rollout.agent.num_workers=1 \
     actor_rollout_ref.rollout.mode=async \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
+    actor_rollout_ref.rollout.max_num_seqs=16 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \
@@ -332,14 +333,14 @@ python3 -m vseek.trainer.main_ppo \
     trainer.nnodes=$((SLURM_JOB_NUM_NODES)) \
     trainer.save_freq=10 \
     trainer.test_freq=40 \
-    trainer.max_actor_ckpt_to_keep=2 \
+    trainer.max_actor_ckpt_to_keep=1 \
     data.train_files=$TRAIN_DATA_PATH \
     data.val_files=$VAL_DATA_PATH \
     actor_rollout_ref.rollout.multi_turn.tool_config_path="$TOOL_CONFIG_TMP" \
     actor_rollout_ref.rollout.agent.agent_loop_config_path="${PROJECT_ROOT}/src/vseek/config/retriever/vllm_agent.yaml" \
     actor_rollout_ref.rollout.agent.default_agent_loop="vseek_tag_summary_agent" \
     actor_rollout_ref.rollout.val_kwargs.top_p=1.0 \
-    trainer.total_epochs=50 \
+    trainer.total_epochs=6 \
     trainer.val_before_train=True \
     trainer.log_val_generations=20 \
     custom_reward_function.path="${PROJECT_ROOT}/src/vseek/trainer/reward/vseekreward.py" \
