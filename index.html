@@ -109,7 +109,7 @@
           <div class="column has-text-centered">
             <div class="publication-links">
               <span class="link-block">
-                <a href="https://google.com"
+                <a href="https://arxiv.org/pdf/2607.02959"
                    class="external-link button is-normal is-rounded is-dark">
                   <span class="icon">
                       <i class="fas fa-file-pdf"></i>
@@ -128,24 +128,138 @@
               </span>
             </div>
           </div>
+          <br></br>
+          <figure style="text-align: center;">
+            <img src="static/images/poster.jpg" alt="ECCV Poster" class="zoomable-image">
+            <figcaption style="color: #666; font-style: italic; font-size: 0.9em; margin-top: 8px;">
+              Our ECCV Poster
+            </figcaption>
+          </figure>
         </div>
       </div>
     </div>
-  </div>
 
-  <div class="container is-max-desktop">
-    <div class="columns is-centered has-text-centered">
-      <div class="column is-four-fifths">
-        <h2 class="title is-3">Abstract</h2>
-        <div class="content has-text-justified">
-          <p>
-            We introduce VSeek, an agentic framework that transforms long-video Question Answering (LVQA) from a passive, single-pass perception task into a multi-turn retrieval process. VSeek utilizes a natural language-driven search to identify relevant context within long videos and is post-trained with Reinforcement Learning (RL) to jointly formulate targeted search queries and reason over retrieved clips for LVQA. While RL post-training has revolutionized reasoning in symbolic domains like mathematics and code, its application to long-video understanding remains hindered by a lack of verified rewards. To ensure that the retrieved context is relevant, we propose a novel neuro-symbolic approach that bridges open-ended natural language with discrete visual verification. Specifically, complex user queries are compiled into formal temporal logic specifications for systematically decomposing natural language questions into a definitive checklist of required atomic visual primitives, such as key objects and activities, along with their temporal ordering. These systematically derived grounding events provide the critical feedback signal for RL post-training, enabling dense, verifiable rewards based on the successful retrieval of these specific visual elements rather than relying entirely on outcome-only answer accuracy. By explicitly optimizing for this verifiable evidence-seeking behavior, VSeek improves Pass@1 scores by up to 8% and Pass@4 scores by 15% on long-video understanding benchmarks compared to base models.
-          </p>
+    <span style="display: block; height: 36px;"></span>
+    <div class="container is-max-desktop">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <h2 class="title is-3">Abstract</h2>
+          <div class="content has-text-justified">
+            <p>
+              We introduce VSeek, an agentic framework that transforms long-video Question Answering (LVQA) from a passive, single-pass perception task into a multi-turn retrieval process. VSeek utilizes a natural language-driven search to identify relevant context within long videos and is post-trained with Reinforcement Learning (RL) to jointly formulate targeted search queries and reason over retrieved clips for LVQA. While RL post-training has revolutionized reasoning in symbolic domains such as mathematics and code, its application to long-video understanding remains hindered by a lack of verified rewards. To ensure that the retrieved context is relevant, we propose a novel neuro-symbolic approach that bridges open-ended natural language with discrete visual verification. Specifically, complex user queries are compiled into formal temporal logic specifications for systematically decomposing natural language questions into a definitive checklist of required atomic visual primitives, such as key objects and activities, along with their temporal ordering. These systematically derived grounding events provide the critical feedback signal for RL post-training, enabling dense, verifiable rewards based on the successful retrieval of these specific visual elements rather than relying entirely on outcome-only answer accuracy. By explicitly optimizing for this verifiable evidence-seeking behavior, VSeek improves Pass@1 scores by up to 8% and Pass@4 scores by 15% on long-video understanding benchmarks compared to base models.
+            </p>
+          </div>
         </div>
       </div>
     </div>
   </div>
 </section>
+
+<div class="container is-max-desktop">
+  <div class="rows is-centered">
+    <div class="row">
+      <h2 class="title is-3 has-text-centered">Methodology</h2>
+    </div>
+    <br>
+    <div class="row">
+      <p>
+        VSeek casts long-video question answering as a sequential decision process: a single VLM alternates between reasoning and retrieval, issuing natural-language searches over an indexed video until it has gathered enough evidence to answer. To post-train this behavior without relying on outcome-only accuracy, we introduce VETL, which compiles a question into a temporal logic specification and turns the visual primitives it requires into a dense, verifiable reward.
+      </p>
+    </div>
+    <br>
+    <p>
+      <ul class="dashed-list">
+        <li> <b>Step 1: </b>We segment the video into 8-second clips and embed them with the ViCLIP video encoder, while separately indexing subtitles against the exact frame windows in which they occur.
+        </li>
+        <li> <b>Step 2: </b>At each turn the agent decodes reasoning tokens followed by a search action, and the environment returns a retrieved segment that is appended to its context. Three tools are available: semantic visual search, subtitle search, and a uniform video summary, each capped at 16 frames per turn.
+        </li>
+        <li> <b>Step 3: </b>VETL compiles the question and reference answer into a temporal logic specification through a generate-verify loop, where a judge model scores each proposal for entity coverage and temporal faithfulness and returns structured feedback until the score clears a threshold.
+        </li>
+        <li> <b>Step 4: </b>We extract the atomic visual primitives from the accepted specification and use a deterministic ViCLIP checker to test whether each one appears in any retrieved observation. The reward is the fraction of required primitives the agent actually surfaced.
+        </li>
+        <li> <b>Step 5: </b>We combine this with exact-match accuracy as <i>R</i> = 0.7 <i>R</i><sub>em</sub> + 0.3 <i>R</i><sub>VETL</sub> and post-train with GRPO, rewarding the agent for seeking verifiable evidence rather than guessing.
+        </li>
+      </ul>
+    </p>
+    <br>
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-full">
+        <img src="static/images/vetl.png" alt="VETL reward computation" class="zoomable-image">
+      </div>
+    </div>
+  </div>
+  <br>
+</div>
+<br><br>
+
+<div class="container is-max-desktop">
+  <div class="row">
+    <h2 class="title is-3 has-text-centered">Key Capabilities</h2>
+  </div>
+  <br>
+  <div class="columns is-centered">
+    <div class="column">
+      <div class="content">
+        <h3 class="title is-4 has-text-centered">Verified Rewards Beat Exact Match</h3>
+        <p>
+        On three in-domain benchmarks, VSeek-VETL beats the base model it is post-trained from, the agentic baselines, and VSeek-EM, which sees only an exact-match reward. A 4B model trained this way overtakes GPT-5.2 on LongVideoBench and MLVU.
+</p>
+      </div>
+    </div>
+    <div class="column">
+      <div class="columns is-centered">
+        <div class="column content">
+          <h3 class="title is-4 has-text-centered">Gains Grow with Video Length</h3>
+          <p>
+          Dense, verifiable feedback matters most where uniform sampling breaks down. On the longest videos, VSeek-VETL gains 11.0 points over the base model on both LongVideoBench and MLVU, pulling clearly ahead of exact-match training.
+</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="columns is-centered is-vcentered">
+    <div class="column">
+      <div class="columns is-centered">
+        <div class="column content">
+          <img src="static/images/results.png" alt="Majority@4 accuracy on in-domain benchmarks" class="zoomable-image">
+        </div>
+      </div>
+    </div>
+    <div class="column">
+      <div class="columns is-centered">
+        <div class="column content">
+          <img src="static/images/video_length.png" alt="Accuracy by video length" class="zoomable-image">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3 class="title is-4 has-text-centered">Better Answers From Half the Frames</h3>
+  <p>
+  Average frames sampled per query. Where the static baselines always consume a fixed 64 frames and VideoTree scales to hundreds of captions on long content, VSeek settles at roughly 32 frames regardless of duration. VSeek-VETL samples slightly more than VSeek-EM because rewarding unverified claims less encourages more thorough retrieval, and that extra evidence is what closes the gap on long videos.
+  </p>
+  <br>
+  <div class="columns is-centered">
+    <div class="column is-four-fifths">
+      <img src="static/images/efficiency_table.png" class="zoomable-image">
+    </div>
+  </div>
+</div>
+<br>
+
+<section class="section" id="BibTeX">
+  <div class="container is-max-desktop content">
+    <h2 class="title">BibTeX</h2>
+    <pre><code>@inproceedings{goel2026incentivizing,
+  author    = {Goel, Harsh and Sharan, SP and Shah, Sahil and Choi, Minkyu and An, Joungbin and Grauman, Kristen and Chinchali, Sandeep},
+  title     = {Incentivizing Vision Language Models to Search for Long Video Question Answering},
+  journal   = {Proceedings of the European Conference on Computer Vision (ECCV)},
+  month     = {September},
+  year      = {2026},
+}</code></pre>
+  </div>
+</section>
+
 
 <footer class="footer">
   <div class="container">
@@ -160,6 +274,37 @@
     </div>
   </div>
 </footer>
+
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const images = document.querySelectorAll(".zoomable-image");
+    const zoomOverlay = document.createElement("div");
+    zoomOverlay.classList.add("zoom-overlay");
+    const zoomImage = document.createElement("img");
+    zoomOverlay.appendChild(zoomImage);
+    document.body.appendChild(zoomOverlay);
+    images.forEach((img) => {
+      const highResSrc = img.getAttribute("data-highres");
+      if (highResSrc) {
+        const preloadImg = new Image();
+        preloadImg.src = highResSrc;
+      }
+
+      img.addEventListener("click", () => {
+        zoomImage.src = highResSrc || img.src;
+        zoomOverlay.classList.add("active");
+      });
+    });
+    zoomOverlay.addEventListener("click", () => {
+      zoomOverlay.classList.remove("active");
+      zoomImage.src = "";
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") zoomOverlay.classList.remove("active");
+    });
+  });
+</script>
 
 </body>
 </html>
