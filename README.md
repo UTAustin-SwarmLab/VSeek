@@ -496,15 +496,13 @@ VSeek-R1/
 If you use this code, please cite:
 
 ```bibtex
-@inproceedings{hg_2026_ECCV,
-  author={Goel, Harsh and Sharan, SP and Shah, Sahil and Choi, Minkyu and An, Joungbin, and Grauman, Kristen, and Chinchali, Sandeep},
+@inproceedings{goel2026incentivizing,
   title={Incentivizing Vision Language Models to Search for Long Video Question Answering},
-  booktitle={Proceedings of the European Conference on Computer Vision (ECCV)},
-  year = {2026},
-  address = {Malmo, Sweden},
-  month = {9},
-  publisher = {Springer},
-  keywords={2026},
+  author={Goel, Harsh and Sharan, SP and Shah, Sahil and Choi, Minkyu and An, Joungbin and Grauman, Kristen and Chinchali, Sandeep P},
+  booktitle={European Conference on Computer Vision},
+  pages={539--558},
+  year={2026},
+  organization={Springer}
 }
 ```
 
