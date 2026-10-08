@@ -2,6 +2,27 @@
 
 **Official codebase for VSeek-R1** — a tool-using video agent that learns to *seek* answer-critical evidence in long videos via reinforcement learning (GRPO), rather than ingesting dense frame stacks end-to-end.
 
+## Released weights, data, and index
+
+Download these from [SWARM-Lab](https://huggingface.co/SWARM-Lab) instead of rebuilding them. Each one stands in for a later step in this README.
+
+| Download | Use it for | Replaces |
+|----------|------------|----------|
+| [**VSeek-EM**](https://huggingface.co/SWARM-Lab/VSeek-EM) and [**VSeek-VETL**](https://huggingface.co/SWARM-Lab/VSeek-VETL) | `--model-path` in [Inference](#inference) and [Evaluation](#evaluation) | [Training (GRPO)](#training-grpo) and [Merge FSDP checkpoints → Hugging Face format](#merge-fsdp-checkpoints--hugging-face-format) |
+| [**VSeek-data**](https://huggingface.co/datasets/SWARM-Lab/VSeek-data) | `data.train_files` in [Training (GRPO)](#training-grpo) and the test set in [Evaluation](#evaluation) | [Process Datasets](#process-datasets) step 5 (`preprocess_lvb.sh`, `preprocess_mlvu.sh`, `preprocess_videomme.sh`, `preprocess_cgbench.sh`, `preprocess_lvbench.sh`) |
+| [**VSeek-Index**](https://huggingface.co/datasets/SWARM-Lab/VSeek-Index) | `retriever.index_path` / `$INDEX_PATH` in [Run the Retriever Server](#run-the-retriever-server) | [Process Datasets](#process-datasets) step 3 (`run_data_pipeline.py` for `lvb`, `lvbench`, `videomme`, `mlvu`, and `cgbench`) |
+
+`train.parquet` (4,968 rows) is LongVideoBench, MLVU, and Video-MME. `test.parquet` (2,153 rows) is those three plus CG-Bench and LVBench.
+
+The index is the window-8 tree (`{dataset}_window_8/{video_id}/` with `embeddings.pt`, `frames.mp4`, and `metadata.json`). You still start the retriever server yourself. You also still need the ViCLIP files at the end of [Download Datasets](#download-datasets): `ViClip-InternVid-10M-FLT.pth` and `bpe_simple_vocab_16e6.txt.gz`. Raw benchmark videos from [Download Datasets](#download-datasets), plus unzip and subtitle burn in [Process Datasets](#process-datasets) steps 1–2, are still required for the server to register each video.
+
+```bash
+huggingface-cli download SWARM-Lab/VSeek-EM --local-dir checkpoints/VSeek-EM
+huggingface-cli download SWARM-Lab/VSeek-VETL --local-dir checkpoints/VSeek-VETL
+huggingface-cli download SWARM-Lab/VSeek-data --repo-type dataset --local-dir data/VSeek-data
+huggingface-cli download SWARM-Lab/VSeek-Index --repo-type dataset --local-dir data/VSeek-Index
+```
+
 > **Slurm / HPC (TACC Vista):** see [`README_SLURM.md`](README_SLURM.md).
 
 <!-- Update these badges once the camera-ready / arXiv links are final
@@ -9,12 +30,13 @@
 [![arXiv](https://img.shields.io/badge/arXiv-XXXX.XXXXX-b31b1b.svg)](https://arxiv.org/abs/XXXX.XXXXX)
 -->
 
-> **Path note (local vs Slurm):** defaults on this branch (`v0.6.1`) point at the **local lab** layout under `/nas/mars/...` and `/home/.../vseek/dataset`. The `harsh_tacc` / Slurm configs use **TACC `$SCRATCH` / `$WORK`** paths instead. Always rewrite dataset, index, ViCLIP, and parquet paths for your machine before launching the retriever or training — see [Path conventions](#path-conventions-local-vs-tacc).
+> **Branches:** `main` tracks `v0.6.1`. Both use the local lab paths (`/nas/mars/...`, `/home/.../vseek/dataset`). `harsh_tacc` is the branch with TACC/Slurm paths (`$SCRATCH`, `$WORK`, port 9000). See [Path conventions](#path-conventions-local-vs-tacc) and [`README_SLURM.md`](README_SLURM.md).
 
 ---
 
 ## Table of Contents
 
+- [Released weights, data, and index](#released-weights-data-and-index)
 - [Overview](#overview)
 - [Path conventions (local vs TACC)](#path-conventions-local-vs-tacc)
 - [Requirements](#requirements)
@@ -32,7 +54,7 @@
 
 ## Path conventions (local vs TACC)
 
-Configs and launch scripts hard-code filesystem roots. **`v0.6.1` assumes a local shared NAS; `harsh_tacc` retargets only some of those files to Vista.** Mixing branches or launching training scripts without checking paths will break the retrieval server and tool calls.
+Configs and launch scripts hard-code filesystem roots. **`main` tracks `v0.6.1`**, and both assume the local shared NAS. **`harsh_tacc` is the TACC/Slurm branch** and retargets only some of those files to Vista (`$SCRATCH` / `$WORK`). Mixing branches or launching training scripts without checking paths will break the retrieval server and tool calls.
 
 ### What actually differs between branches
 
