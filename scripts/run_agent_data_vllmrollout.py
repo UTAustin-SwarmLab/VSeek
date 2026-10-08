@@ -102,6 +102,7 @@ def _load_lvb_examples(
 ):
     parquet_path = os.path.expanduser(parquet_path)
     data_files = _resolve_parquet_files(parquet_path, tag=tag )
+    print("Parquet files:", data_files)
     ds = datasets.load_dataset("parquet", data_files=data_files)["train"]
     if len(ds) == 0:
         raise RuntimeError(f"Empty parquet dataset: {parquet_path}")
@@ -155,6 +156,32 @@ def parse_answer(answer: str) -> str:
     
     return numbers[0] if numbers else letters[0] if letters else ""
 
+def _pass_at_k_report(all_results: list[dict], passes: int) -> dict:
+    n_passes = passes
+    ks = [k for k in (1, 2, 4, 5, 8, 10, 16) if k <= n_passes]
+    if n_passes > 1 and n_passes not in ks:
+        ks.append(n_passes)
+    ks = sorted(set(ks))
+    scores = {"num_examples": len(all_results)}
+    for k in ks:
+        if not all_results:
+            scores[f"pass@{k}"] = None
+            continue
+        total = 0.0
+        for row in all_results:
+            total += _pass_at_k_estimator(n_passes, int(row.get("correct_count", 0)), k)
+        scores[f"pass@{k}"] = total / len(all_results)
+    return scores
+
+
+def _pass_at_k_estimator(n: int, c: int, k: int) -> float:
+    if n < k:
+        return 0.0
+    if n - c < k:
+        return 1.0
+    return 1.0 - (math.comb(n - c, k) / math.comb(n, k))
+
+
 def calculate_accuracy(results: list[dict]) -> float:
     if not results:
         return 0.0
@@ -187,8 +214,10 @@ def rollout_agent_data(
     agent_type: str,
     passes: int,
     store_preds: bool,
+    temperature: float = 0.5,
+    tool_config_path: str | None = None,
 ):
-    ray.init(
+    ray_init_kwargs = dict(
         runtime_env={
             "env_vars": {
                 "TOKENIZERS_PARALLELISM": "true",
@@ -199,7 +228,12 @@ def rollout_agent_data(
             }
         },
         ignore_reinit_error=True,
+        include_dashboard=False,
     )
+    ray_tmpdir = os.environ.get("RAY_TMPDIR")
+    if ray_tmpdir:
+        ray_init_kwargs["_temp_dir"] = ray_tmpdir
+    ray.init(**ray_init_kwargs)
     
 
     assert torch.cuda.device_count() >= 1
@@ -306,8 +340,11 @@ def rollout_agent_data(
     rollout_config.actor_rollout_ref.rollout.multi_turn.tool_config_path = "./src/vseek/config/retriever/toolconfig.yaml"
     rollout_config.actor_rollout_ref.rollout.multi_turn.max_tool_response_length = 1024
     rollout_config.actor_rollout_ref.rollout.max_num_batched_tokens = 65536
-    rollout_config.actor_rollout_ref.rollout.temperature = 0.5
+    rollout_config.actor_rollout_ref.rollout.temperature = temperature
+    rollout_config.actor_rollout_ref.rollout.val_kwargs.temperature = temperature
     rollout_config.actor_rollout_ref.rollout.n = passes
+    if tool_config_path:
+        rollout_config.actor_rollout_ref.rollout.multi_turn.tool_config_path = tool_config_path
 
     rollout_config.actor_rollout_ref.rollout.agent.num_workers = 4
     rollout_config.actor_rollout_ref.rollout.skip_tokenizer_init = True
@@ -521,36 +558,36 @@ def rollout_agent_data(
                 f"[rank {rank}] Progress {start}/{total} | Accuracy: {acc:.3f} ({num_correct}/{len(all_results)})"
             )
         
-        import math
-        def comb(n, k):
-            return math.comb(n, k)
-        
-        def pass_at_k_estimator(n, c, k):
-            if n < k: return 0.0 # Should not happen if we filter ks
-            if n - c < k: return 1.0
-            return 1.0 - (comb(n-c, k) / comb(n, k))
-        
-        print(f"Results for {agent_type} on {output_prefix} with {passes} passes and {prompt_type} prompt type:")
-        eval_total = len(all_results)
-        if eval_total > 0:
-
-            n_passes = passes
-            ks = [1, 2, 4, 5, 8, 10, 16]
-            ks = [k for k in ks if k <= n_passes]
-            # Include n_passes if not present and > 1
-            if n_passes > 1 and n_passes not in ks:
-                ks.append(n_passes)
-            ks = sorted(list(set(ks)))
-            
-            for k in ks:
-                sum_pass_at_k = 0.0
-                for r in all_results:
-                    c = r.get("correct_count", 0)
-                    sum_pass_at_k += pass_at_k_estimator(n_passes, c, k)
-                avg_pass_at_k = sum_pass_at_k /eval_total
-                print(f"Pass@{k} Accuracy: {avg_pass_at_k:.3f}")
+        print(
+            f"Results for {agent_type} on {output_prefix} with {passes} passes, "
+            f"{prompt_type} prompt type, temperature {temperature}:"
+        )
+        progress_metrics = _pass_at_k_report(all_results, passes)
+        if progress_metrics["num_examples"] > 0:
+            for key, value in progress_metrics.items():
+                if key.startswith("pass@") and value is not None:
+                    print(f"Pass@{key.split('@')[1]} Accuracy: {value:.3f}")
         else:
             print("No results found.")
+
+    metrics = _pass_at_k_report(all_results, passes)
+    metrics.update(
+        {
+            "num_examples": len(all_results),
+            "passes": passes,
+            "temperature": temperature,
+            "parquet_path": parquet_path,
+            "model_path": local_model_path,
+            "output_prefix": output_prefix,
+            "agent_type": agent_type,
+            "prompt_type": prompt_type,
+        }
+    )
+    metrics_path = out_dir.joinpath("metrics.json")
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"FINAL_METRICS {json.dumps(metrics)}")
+    print(f"Wrote {metrics_path}")
 
     return None
     # torch.distributed.barrier()
@@ -575,6 +612,12 @@ if __name__ == "__main__":
     parser.add_argument("--prompt_type", type=str, default="tag", help="Prompt type: tag or openai or tagsummary or fanout")
     parser.add_argument("--agent_type", type=str, default="tag", help="Agent type: tag or openai or tagsummary or fanout")
     parser.add_argument("--passes", type=int, default=16, help="Number of passes")
+    parser.add_argument("--temperature", type=float, default=0.5, help="Sampling temperature")
+    parser.add_argument(
+        "--tool_config_path",
+        default=None,
+        help="Override multi-turn tool config path",
+    )
     parser.add_argument(
         "--store_preds",
         nargs="?",
@@ -606,4 +649,6 @@ if __name__ == "__main__":
         agent_type=args.agent_type,
         passes=args.passes,
         store_preds=args.store_preds,
+        temperature=args.temperature,
+        tool_config_path=args.tool_config_path,
     )
