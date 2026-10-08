@@ -30,7 +30,7 @@ huggingface-cli download SWARM-Lab/VSeek-Index --repo-type dataset --local-dir d
 [![arXiv](https://img.shields.io/badge/arXiv-XXXX.XXXXX-b31b1b.svg)](https://arxiv.org/abs/XXXX.XXXXX)
 -->
 
-> **Path note (local vs Slurm):** defaults on this branch (`v0.6.1`) point at the **local lab** layout under `/nas/mars/...` and `/home/.../vseek/dataset`. The `harsh_tacc` / Slurm configs use **TACC `$SCRATCH` / `$WORK`** paths instead. Always rewrite dataset, index, ViCLIP, and parquet paths for your machine before launching the retriever or training — see [Path conventions](#path-conventions-local-vs-tacc).
+> **Branches:** `main` tracks `v0.6.1`. Both use the local lab paths (`/nas/mars/...`, `/home/.../vseek/dataset`). `harsh_tacc` is the branch with TACC/Slurm paths (`$SCRATCH`, `$WORK`, port 9000). See [Path conventions](#path-conventions-local-vs-tacc) and [`README_SLURM.md`](README_SLURM.md).
 
 ---
 
@@ -54,7 +54,7 @@ huggingface-cli download SWARM-Lab/VSeek-Index --repo-type dataset --local-dir d
 
 ## Path conventions (local vs TACC)
 
-Configs and launch scripts hard-code filesystem roots. **`v0.6.1` assumes a local shared NAS; `harsh_tacc` retargets only some of those files to Vista.** Mixing branches or launching training scripts without checking paths will break the retrieval server and tool calls.
+Configs and launch scripts hard-code filesystem roots. **`main` tracks `v0.6.1`**, and both assume the local shared NAS. **`harsh_tacc` is the TACC/Slurm branch** and retargets only some of those files to Vista (`$SCRATCH` / `$WORK`). Mixing branches or launching training scripts without checking paths will break the retrieval server and tool calls.
 
 ### What actually differs between branches
 
