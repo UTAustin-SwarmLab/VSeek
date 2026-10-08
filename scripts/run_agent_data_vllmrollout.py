@@ -217,16 +217,24 @@ def rollout_agent_data(
     temperature: float = 0.5,
     tool_config_path: str | None = None,
 ):
+    worker_env = {
+        "TOKENIZERS_PARALLELISM": "true",
+        "NCCL_DEBUG": "WARN",
+        "VLLM_LOGGING_LEVEL": "INFO",
+        # Use V0 for stable multimodal support; V1 has cache issues with vision models
+        "VLLM_USE_V1": "1",
+    }
+    # Ray actors do not inherit the driver's sys.path inserts. Keep workers on this
+    # checkout so the search tool (and vendored verl) match the driver.
+    pythonpath_parts = [
+        os.path.join(PROJECT_ROOT, "src"),
+        VENDORED_VERL_ROOT,
+    ]
+    if os.environ.get("PYTHONPATH"):
+        pythonpath_parts.append(os.environ["PYTHONPATH"])
+    worker_env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
     ray_init_kwargs = dict(
-        runtime_env={
-            "env_vars": {
-                "TOKENIZERS_PARALLELISM": "true",
-                "NCCL_DEBUG": "WARN",
-                "VLLM_LOGGING_LEVEL": "INFO",
-                # Use V0 for stable multimodal support; V1 has cache issues with vision models
-                "VLLM_USE_V1": "1",
-            }
-        },
+        runtime_env={"env_vars": worker_env},
         ignore_reinit_error=True,
         include_dashboard=False,
     )

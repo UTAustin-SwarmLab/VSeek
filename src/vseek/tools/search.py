@@ -275,16 +275,26 @@ class VideoSearchTool(BaseTool):
             new_height = int(height * scale)
             frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
         
-        # Encode a uint8 numpy array (image) as a JPEG and then base64 encode it.
+        # OpenCV's JPEG encoder reads 3-channel frames as BGR. Frames here are RGB.
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         encode_params = [cv2.IMWRITE_JPEG_QUALITY, quality]
         ret, buffer = cv2.imencode(".jpg", frame, encode_params)
         if not ret:
             raise ValueError("Could not encode frame")
         return base64.b64encode(buffer).decode("utf-8")
     
-    async def _encode_frame_bytes_to_base64(self, frame):
-        # Resize frame to reduce aspect ratio and make it easier to parse
-        return base64.b64encode(frame).decode("utf-8")
+    async def _encode_frame_bytes_to_base64(self, frame, quality=95):
+        # These JPEGs were written from RGB arrays with cv2.imencode, so red and blue
+        # are swapped. Decode, swap the channels back, and re-encode.
+        encoded = np.frombuffer(frame, dtype=np.uint8)
+        image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError("Could not decode precomputed frame")
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        ret, buffer = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])
+        if not ret:
+            raise ValueError("Could not re-encode precomputed frame")
+        return base64.b64encode(buffer).decode("utf-8")
     
     @rollout_trace_op
     async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> tuple[ToolResponse, float, dict]:
